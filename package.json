@@ -1,0 +1,5 @@
+{
+  "name": "fiftybox",
+  "version": "1.0.0",
+  "description": "Claude + Codex + Pi CLI orchestration harness — TDD-driven development pipeline"
+}
