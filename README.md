@@ -67,6 +67,12 @@ cd fiftybox && ./install.sh
 /orchestrate "add JWT authentication to the API"
 ```
 
+### Flags
+
+| Flag | Description |
+|------|-------------|
+| `--skip-verify` | Skip the Design phase (Codex verification). Use when design is already done and you only need implementation (`/pi-execute`). |
+
 ---
 
 ## How It Works
