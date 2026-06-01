@@ -1,0 +1,25 @@
+{
+  "explore_agent": "pi",
+  "implement_agent": "pi",
+  "agents": {
+    "pi": {
+      "cmd": ["pi", "--print", "--provider", "{provider}", "--model", "{model}",
+              "--no-session", "--no-context-files", "--append-system-prompt", "{prompt}", "{task}"]
+    },
+    "opencode": {
+      "cmd": ["opencode", "run", "--model", "{model}", "--print", "{prompt}\n{task}"]
+    },
+    "aider": {
+      "cmd": ["aider", "--message", "{prompt}\n{task}", "--yes-always", "--no-git"]
+    },
+    "gemini": {
+      "cmd": ["gemini", "-p", "{prompt}\n{task}"]
+    },
+    "qwen": {
+      "cmd": ["qwen-code", "--model", "{model}", "--message", "{prompt}\n{task}"]
+    },
+    "cursor": {
+      "cmd": ["{adapters_dir}/cursor.sh", "{prompt}", "{task}", "{model}"]
+    }
+  }
+}
