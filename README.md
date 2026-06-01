@@ -74,15 +74,41 @@ cd fiftybox && ./install.sh
 | Phase | Agent | What happens |
 |-------|-------|-------------|
 | 0 Setup | Claude | Creates isolated git worktree + artifact dir |
-| 1 Explore | Pi CLI | Maps codebase, identifies relevant files |
+| 1 Explore | explore_agent (default: Pi) | Maps codebase, identifies relevant files |
 | 2 Clarify | Claude | Confirms intent with user if ambiguous |
 | 3 Design | Codex | Verifies architecture, flags risks |
 | 4 Test | Claude | Writes failing tests (Red) |
-| 5 Implement | Pi CLI | Implements to pass tests (Green) |
+| 5 Implement | implement_agent (default: Pi) | Implements to pass tests (Green) |
 | 6 Review | Codex | Reviews code, runs tests |
 | 7 Commit | Claude | Commits → merges → pushes |
 
 ---
+
+## Agent Configuration
+
+By default, fiftybox uses Pi CLI for both exploration and implementation.
+To switch agents, run:
+
+```bash
+./configure.sh
+```
+
+Or edit `~/.claude/skills/orchestrate/config.json` directly.
+
+Supported built-in agents: `pi`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`
+
+### Adding a custom agent
+
+```json
+{
+  "implement_agent": "my-agent",
+  "agents": {
+    "my-agent": { "cmd": ["/path/to/my-agent.sh", "{prompt}", "{task}"] }
+  }
+}
+```
+
+Template variables: `{prompt}`, `{task}`, `{model}`, `{provider}`, `{adapters_dir}`
 
 ## License
 

@@ -65,6 +65,18 @@ PHASE_DEPENDENCIES: dict[str, list[str]] = {
 
 OMX_TEAM_CLI = "omx"
 
+SKILL_DIR = Path.home() / ".claude" / "skills" / "orchestrate"
+
+BUILTIN_AGENTS: dict[str, dict] = {
+    "pi": {"cmd": ["pi", "--print", "--provider", "{provider}", "--model", "{model}",
+                   "--no-session", "--no-context-files", "--append-system-prompt", "{prompt}", "{task}"]},
+    "opencode": {"cmd": ["opencode", "run", "--model", "{model}", "--print", "{prompt}\n{task}"]},
+    "aider": {"cmd": ["aider", "--message", "{prompt}\n{task}", "--yes-always", "--no-git"]},
+    "gemini": {"cmd": ["gemini", "-p", "{prompt}\n{task}"]},
+    "qwen": {"cmd": ["qwen-code", "--model", "{model}", "--message", "{prompt}\n{task}"]},
+    "cursor": {"cmd": ["{adapters_dir}/cursor.sh", "{prompt}", "{task}", "{model}"]},
+}
+
 
 def omx_team_api(operation: str, input_data: dict[str, Any], cwd: Path, timeout: int = 60) -> dict[str, Any]:
     """Call OMX team API via CLI interop (the only non-deprecated mutation path)."""
@@ -119,6 +131,53 @@ def detect_interop_paths(cwd: Path) -> dict[str, Any]:
         paths["warnings"].append("Bridge flags set but interop tools not registered (OMC_INTEROP_TOOLS_ENABLED!=1).")
 
     return paths
+
+
+def load_agent_config(skill_dir: Path) -> dict[str, Any]:
+    """Load config.json; fall back to Pi defaults for any missing or malformed keys."""
+    config_path = skill_dir / "config.json"
+    defaults: dict[str, Any] = {"explore_agent": "pi", "implement_agent": "pi", "agents": dict(BUILTIN_AGENTS)}
+    if not config_path.exists():
+        return defaults
+    try:
+        raw = json.loads(config_path.read_text(encoding="utf-8"))
+        if not isinstance(raw, dict):
+            raise ValueError(f"config.json must be a JSON object, got {type(raw).__name__}")
+        agents_raw = raw.get("agents", {})
+        if not isinstance(agents_raw, dict):
+            agents_raw = {}
+        merged_agents = {**BUILTIN_AGENTS, **agents_raw}
+        return {
+            **raw,
+            "explore_agent": raw.get("explore_agent", "pi"),
+            "implement_agent": raw.get("implement_agent", "pi"),
+            "agents": merged_agents,
+        }
+    except (json.JSONDecodeError, ValueError, TypeError) as exc:
+        return {**defaults, "_config_error": str(exc)}
+
+
+def build_agent_cmd(agent_name: str, config: dict, *, prompt: str, task: str, model: str, provider: str, adapters_dir: Path) -> list[str]:
+    if agent_name not in config["agents"]:
+        raise ValueError(f"Unknown agent '{agent_name}'. Add it to config.json or run ./configure.sh.")
+    agent_def = config["agents"][agent_name]
+    if not isinstance(agent_def, dict) or "cmd" not in agent_def:
+        raise ValueError(f"Agent '{agent_name}' config is missing 'cmd' key.")
+    raw_cmd = agent_def["cmd"]
+    if not isinstance(raw_cmd, list) or not raw_cmd:
+        raise ValueError(f"Agent '{agent_name}' 'cmd' must be a non-empty list.")
+    for i, token in enumerate(raw_cmd):
+        if not isinstance(token, str):
+            raise ValueError(f"Agent '{agent_name}' cmd[{i}] is {type(token).__name__!r}, not a string.")
+    variables = {"prompt": prompt, "task": task, "model": model,
+                 "provider": provider, "adapters_dir": str(adapters_dir)}
+    try:
+        return [token.format(**variables) for token in raw_cmd]
+    except KeyError as exc:
+        raise ValueError(
+            f"Agent '{agent_name}' cmd references unknown template variable {exc}. "
+            f"Valid variables: {sorted(variables.keys())}"
+        ) from exc
 
 
 CODEX_API_ERROR_PATTERNS = [
@@ -954,26 +1013,80 @@ def phase_setup(root: Path, args: argparse.Namespace) -> int:
     logger = PhaseLogger(artifact_dir, 0, "setup")
     logger.start(cmd="git worktree add + prerequisite check", cwd=str(root))
 
-    pi_bin = shutil.which("pi")
+    # codex and claude are always required — they are orchestration tools, not swappable agents
     codex_bin = shutil.which("codex")
     claude_bin = shutil.which("claude")
-    missing = [name for name, value in (("pi", pi_bin), ("codex", codex_bin), ("claude", claude_bin)) if not value]
+    missing = [name for name, value in (("codex", codex_bin), ("claude", claude_bin)) if not value]
     if missing and not args.dry_run:
         err = f"Missing required CLIs: {', '.join(missing)}"
         logger.log(err)
         logger.finish(1, "failed")
         return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
 
-    if not args.dry_run:
-        pi_models = run(["pi", "--list-models", args.provider], root, timeout=60)
-        logger.log("$ pi --list-models " + args.provider)
-        logger.log(pi_models.stdout)
-        if pi_models.returncode != 0 or args.provider not in pi_models.stdout:
-            err = f"Pi CLI provider unavailable: {args.provider}. Check `pi --list-models {args.provider}`."
-            logger.finish(1, "failed")
-            return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
-    else:
+    if args.dry_run:
         logger.log("[DRY RUN] Skipping prerequisite command checks")
+
+    # Agent config validation
+    agent_config = load_agent_config(SKILL_DIR)
+    if "_config_error" in agent_config:
+        logger.log(f"[CONFIG WARNING] Malformed config.json: {agent_config['_config_error']} — falling back to Pi defaults")
+    configured_agents = {agent_config["explore_agent"], agent_config["implement_agent"]}
+
+    # Agent definition validation: unknown name and malformed cmd are hard config errors;
+    # missing binary is warn-only (binary may be installed later)
+    adapters_dir = SKILL_DIR / "adapters"
+    config_agents = agent_config["agents"]
+    for role in ("explore_agent", "implement_agent"):
+        agent_name = agent_config[role]
+        if agent_name not in config_agents:
+            err = f"{role} '{agent_name}' is not in the agents list. Check config.json or run ./configure.sh."
+            logger.log(f"[CONFIG ERROR] {err}")
+            if not args.dry_run:
+                logger.finish(1, "failed")
+                return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
+        else:
+            agent_def = config_agents[agent_name]
+            # Validate cmd shape now so malformed definitions fail at setup, not mid-pipeline
+            if not isinstance(agent_def, dict):
+                err = f"{role} '{agent_name}' config must be a JSON object, got {type(agent_def).__name__}."
+                logger.log(f"[CONFIG ERROR] {err}")
+                if not args.dry_run:
+                    logger.finish(1, "failed")
+                    return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
+            else:
+                raw_cmd = agent_def.get("cmd")
+                if not isinstance(raw_cmd, list) or not raw_cmd:
+                    err = f"{role} '{agent_name}' 'cmd' must be a non-empty list."
+                    logger.log(f"[CONFIG ERROR] {err}")
+                    if not args.dry_run:
+                        logger.finish(1, "failed")
+                        return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
+                elif not isinstance(raw_cmd[0], str):
+                    err = f"{role} '{agent_name}' cmd[0] must be a string, got {type(raw_cmd[0]).__name__}."
+                    logger.log(f"[CONFIG ERROR] {err}")
+                    if not args.dry_run:
+                        logger.finish(1, "failed")
+                        return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
+                else:
+                    bin_path = raw_cmd[0].replace("{adapters_dir}", str(adapters_dir))
+                    if bin_path.endswith(".sh"):
+                        if not Path(bin_path).exists():
+                            logger.log(f"[AGENT WARNING] {role} adapter script not found: {bin_path}")
+                    elif bin_path and not shutil.which(bin_path):
+                        logger.log(f"[AGENT WARNING] {role} agent binary '{bin_path}' not found — install it before running /orchestrate")
+
+    # Pi provider check: fail-fast for Pi users (preserves backward compatibility)
+    if not args.dry_run and "pi" in configured_agents:
+        try:
+            pi_models = run(["pi", "--list-models", args.provider], root, timeout=60)
+            logger.log("$ pi --list-models " + args.provider)
+            logger.log(pi_models.stdout)
+            if pi_models.returncode != 0 or args.provider not in pi_models.stdout:
+                err = f"Pi CLI provider unavailable: {args.provider}. Check `pi --list-models {args.provider}`."
+                logger.finish(1, "failed")
+                return fail_json(phase="setup", error=err, artifact_dir=artifact_dir)
+        except (FileNotFoundError, OSError) as exc:
+            logger.log(f"[AGENT WARNING] pi not found — cannot verify provider: {exc}")
 
     interop_paths = detect_interop_paths(root)
     if interop_paths["warnings"]:
@@ -1048,23 +1161,28 @@ def phase_explore(root: Path, artifact_dir: Path, args: argparse.Namespace) -> i
         "3) dependency graph between modules, 4) code patterns and conventions, "
         f"5) areas most relevant to this task: {args.task}"
     )
-    cmd = [
-        "pi",
-        "--print",
-        "--provider",
-        args.provider,
-        "--model",
-        args.explore_model,
-        "--no-session",
-        "--no-context-files",
-        "--append-system-prompt",
-        system_prompt,
-        "Explore the repository now. Do not edit files.",
-    ]
-    logger.start(cmd=f"pi --print --provider {args.provider} --model {args.explore_model} [explore prompt]", cwd=str(worktree))
+    agent_config = load_agent_config(SKILL_DIR)
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["explore_agent"]
+    # Always include a no-edit instruction in the task regardless of which agent is configured.
+    # This preserves task specificity while enforcing the read-only contract.
+    explore_task = f"Explore the repository for task: {args.task}. Do not edit, create, or delete any files."
+    try:
+        cmd = build_agent_cmd(agent_name, agent_config, prompt=system_prompt, task=explore_task,
+                              model=args.explore_model, provider=args.provider, adapters_dir=adapters_dir)
+    except ValueError as exc:
+        logger.start(cmd=f"{agent_name} [explore] model={args.explore_model}", cwd=str(worktree))
+        logger.log(f"[AGENT ERROR] {exc}")
+        logger.finish(1, "failed")
+        summary["phases"]["explore"] = phase_record("failed", logger, error=str(exc))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="explore", error=str(exc), artifact_dir=artifact_dir)
+    if cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
+    logger.start(cmd=f"{agent_name} [explore] model={args.explore_model}", cwd=str(worktree))
 
     if args.dry_run:
-        output = "# Dry Run Explore Report\n\nPi CLI execution skipped.\n"
+        output = f"# Dry Run Explore Report\n\n{agent_name} execution skipped.\n"
         report_path = artifact_dir / "explore-report.md"
         report_path.write_text(output, encoding="utf-8")
         logger.log("[DRY RUN] Wrote placeholder explore-report.md")
@@ -1079,11 +1197,11 @@ def phase_explore(root: Path, artifact_dir: Path, args: argparse.Namespace) -> i
     try:
         result_proc = run(cmd, worktree, timeout=args.explore_timeout)
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] Pi CLI exceeded {args.explore_timeout}s timeout")
+        logger.log(f"[TIMEOUT] {agent_name} exceeded {args.explore_timeout}s timeout")
         logger.finish(124, "failed")
         summary["phases"]["explore"] = phase_record("timeout", logger)
         write_json(artifact_dir / "summary.json", summary)
-        return fail_json(phase="explore", error=f"Pi CLI timeout ({args.explore_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+        return fail_json(phase="explore", error=f"{agent_name} timeout ({args.explore_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
 
     logger.log(result_proc.stdout)
     if result_proc.returncode != 0:
@@ -1092,7 +1210,7 @@ def phase_explore(root: Path, artifact_dir: Path, args: argparse.Namespace) -> i
         write_json(artifact_dir / "summary.json", summary)
         return fail_json(
             phase="explore",
-            error=(result_proc.stdout or "Unknown Pi CLI error")[-2000:],
+            error=(result_proc.stdout or f"Unknown {agent_name} error")[-2000:],
             artifact_dir=artifact_dir,
             exit_code=result_proc.returncode,
         )
@@ -1457,7 +1575,8 @@ def phase_implement(root: Path, artifact_dir: Path, args: argparse.Namespace) ->
     logger = PhaseLogger(artifact_dir, 6, "implement", is_retry=is_retry)
     design_path = artifact_dir / "design.md"
     intent_path = artifact_dir / "intent-summary.md"
-    logger.start(cmd=f"pi --print --provider {args.provider} --model {args.model} [implementation prompt]", cwd=str(worktree))
+    agent_config_pre = load_agent_config(SKILL_DIR)
+    logger.start(cmd=f"{agent_config_pre['implement_agent']} [implement] model={args.model}", cwd=str(worktree))
 
     if not design_path.exists():
         err = "design.md not found in artifact directory"
@@ -1519,27 +1638,28 @@ Working directory: {worktree}
         return 0
 
     before_files = repo_snapshot(worktree)
-    cmd = [
-        "pi",
-        "--print",
-        "--provider",
-        args.provider,
-        "--model",
-        args.model,
-        "--no-session",
-        "--no-context-files",
-        "--append-system-prompt",
-        prompt,
-        "Implement the requested changes now.",
-    ]
+    agent_config = agent_config_pre
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["implement_agent"]
+    try:
+        cmd = build_agent_cmd(agent_name, agent_config, prompt=prompt, task=args.task,
+                              model=args.model, provider=args.provider, adapters_dir=adapters_dir)
+    except ValueError as exc:
+        logger.log(f"[AGENT ERROR] {exc}")
+        logger.finish(1, "failed")
+        summary["phases"]["implement"] = phase_record("failed", logger, attempt=2 if is_retry else 1, error=str(exc))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="implement", error=str(exc), artifact_dir=artifact_dir)
+    if cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
     try:
         result_proc = run(cmd, worktree, timeout=args.implementation_timeout)
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] Pi CLI exceeded {args.implementation_timeout}s timeout")
+        logger.log(f"[TIMEOUT] {agent_name} exceeded {args.implementation_timeout}s timeout")
         logger.finish(124, "failed")
         summary["phases"]["implement"] = phase_record("timeout", logger, attempt=2 if is_retry else 1)
         write_json(artifact_dir / "summary.json", summary)
-        return fail_json(phase="implement", error=f"Pi CLI timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+        return fail_json(phase="implement", error=f"{agent_name} timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
 
     logger.log(result_proc.stdout)
     if result_proc.returncode != 0:
@@ -1551,7 +1671,7 @@ Working directory: {worktree}
     all_changed = changed_files(worktree, before_files)
     log_content = "# Implementation Log\n\n## Changed Files\n\n"
     log_content += "".join(f"- {path}\n" for path in all_changed) or "- (none)\n"
-    log_content += f"\n## Pi CLI Output\n\n```\n{result_proc.stdout[-5000:]}\n```\n"
+    log_content += f"\n## {agent_name} Output\n\n```\n{result_proc.stdout[-5000:]}\n```\n"
     log_path = artifact_dir / ("implement-log-retry.md" if is_retry else "implement-log.md")
     log_path.write_text(log_content, encoding="utf-8")
 
@@ -1879,8 +1999,9 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
 def phase_pi_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
+    _pic_agent = load_agent_config(SKILL_DIR)["implement_agent"]
     logger = PhaseLogger(artifact_dir, 8, "pi-complete")
-    logger.start(cmd=f"pi --print --provider {args.provider} --model {args.model} [commit/push prompt]", cwd=str(worktree))
+    logger.start(cmd=f"{_pic_agent} [pi-complete] model={args.model}", cwd=str(worktree))
 
     review_status = summary.get("phases", {}).get("review_test", {}).get("status")
     if review_status != "success" and not args.dry_run:
@@ -1937,30 +2058,31 @@ Then provide:
 - branch pushed
 - any remaining warnings
 """
-    cmd = [
-        "pi",
-        "--print",
-        "--provider",
-        args.provider,
-        "--model",
-        args.model,
-        "--no-session",
-        "--no-context-files",
-        "--append-system-prompt",
-        prompt,
-        "Commit and push the completed implementation now.",
-    ]
+    agent_config = load_agent_config(SKILL_DIR)
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["implement_agent"]
+    try:
+        cmd = build_agent_cmd(agent_name, agent_config, prompt=prompt, task=args.task,
+                              model=args.model, provider=args.provider, adapters_dir=adapters_dir)
+    except ValueError as exc:
+        logger.log(f"[AGENT ERROR] {exc}")
+        logger.finish(1, "failed")
+        summary["phases"]["pi_complete"] = phase_record("failed", logger, error=str(exc))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="pi-complete", error=str(exc), artifact_dir=artifact_dir)
+    if cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
     try:
         result_proc = run(cmd, worktree, timeout=args.implementation_timeout)
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] Pi CLI exceeded {args.implementation_timeout}s timeout")
+        logger.log(f"[TIMEOUT] {agent_name} exceeded {args.implementation_timeout}s timeout")
         logger.finish(124, "failed")
         summary["phases"]["pi_complete"] = phase_record("timeout", logger)
         write_json(artifact_dir / "summary.json", summary)
-        return fail_json(phase="pi-complete", error=f"Pi CLI timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+        return fail_json(phase="pi-complete", error=f"{agent_name} timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
 
     logger.log(result_proc.stdout)
-    log_path = write_artifact(artifact_dir, "pi-complete-log.md", f"# Pi Complete Log\n\n```\n{result_proc.stdout}\n```\n")
+    log_path = write_artifact(artifact_dir, "pi-complete-log.md", f"# {agent_name} Complete Log\n\n```\n{result_proc.stdout}\n```\n")
     summary.setdefault("files", {})["piCompleteLog"] = str(log_path)
 
     if result_proc.returncode != 0:
@@ -2028,8 +2150,9 @@ Then provide:
 def phase_pi_deploy(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
+    _pid_agent = load_agent_config(SKILL_DIR)["implement_agent"]
     logger = PhaseLogger(artifact_dir, 9, "pi-deploy")
-    logger.start(cmd=f"pi --print --provider {args.provider} --model {args.model} [deploy prompt]", cwd=str(worktree))
+    logger.start(cmd=f"{_pid_agent} [pi-deploy] model={args.model}", cwd=str(worktree))
 
     complete_status = summary.get("phases", {}).get("pi_complete", {}).get("status")
     if complete_status != "success" and not args.dry_run:
@@ -2080,27 +2203,28 @@ Then provide:
 - evidence of success or failure
 - any follow-up checks the operator should run
 """
-    cmd = [
-        "pi",
-        "--print",
-        "--provider",
-        args.provider,
-        "--model",
-        args.model,
-        "--no-session",
-        "--no-context-files",
-        "--append-system-prompt",
-        prompt,
-        "Run the deploy phase now.",
-    ]
+    agent_config = load_agent_config(SKILL_DIR)
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["implement_agent"]
+    try:
+        cmd = build_agent_cmd(agent_name, agent_config, prompt=prompt, task=args.task,
+                              model=args.model, provider=args.provider, adapters_dir=adapters_dir)
+    except ValueError as exc:
+        logger.log(f"[AGENT ERROR] {exc}")
+        logger.finish(1, "failed")
+        summary["phases"]["pi_deploy"] = phase_record("deploy_failed", logger, error=str(exc))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="pi-deploy", error=str(exc), artifact_dir=artifact_dir)
+    if cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
     try:
         result_proc = run(cmd, worktree, timeout=args.implementation_timeout)
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] Pi CLI exceeded {args.implementation_timeout}s timeout")
+        logger.log(f"[TIMEOUT] {agent_name} exceeded {args.implementation_timeout}s timeout")
         logger.finish(124, "failed")
         summary["phases"]["pi_deploy"] = phase_record("timeout", logger)
         write_json(artifact_dir / "summary.json", summary)
-        return fail_json(phase="pi-deploy", error=f"Pi CLI timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+        return fail_json(phase="pi-deploy", error=f"{agent_name} timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
 
     logger.log(result_proc.stdout)
     log_path = write_artifact(artifact_dir, "deploy-log.md", f"# Deploy Log\n\n```\n{result_proc.stdout}\n```\n")

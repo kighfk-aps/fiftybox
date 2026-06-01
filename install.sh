@@ -27,11 +27,30 @@ cp "$SCRIPT_DIR/skills/orchestrate/SKILL.md" "$SKILLS_DIR/SKILL.md"
 cp "$SCRIPT_DIR/skills/orchestrate/scripts/"*.py "$SKILLS_DIR/scripts/"
 log "Installed skills/orchestrate/ → $SKILLS_DIR"
 
+# Install adapters
+if [[ -d "$SCRIPT_DIR/skills/orchestrate/adapters" ]]; then
+  mkdir -p "$SKILLS_DIR/adapters"
+  cp "$SCRIPT_DIR/skills/orchestrate/adapters/"* "$SKILLS_DIR/adapters/"
+  chmod +x "$SKILLS_DIR/adapters/"*.sh 2>/dev/null || true
+  log "Installed adapters/ → $SKILLS_DIR/adapters"
+fi
+
+# Install config example
+cp "$SCRIPT_DIR/skills/orchestrate/config.example.json" "$SKILLS_DIR/config.example.json"
+log "Config example → $SKILLS_DIR/config.example.json"
+
+# Install configure.sh so plugin users can run it without the repo
+cp "$SCRIPT_DIR/configure.sh" "$SKILLS_DIR/configure.sh"
+chmod +x "$SKILLS_DIR/configure.sh"
+log "Installed configure.sh → $SKILLS_DIR/configure.sh"
+
 # Install slash command
 mkdir -p "$COMMANDS_DIR"
 cp "$SCRIPT_DIR/commands/orchestrate.md" "$COMMANDS_DIR/orchestrate.md"
 log "Installed commands/orchestrate.md → $COMMANDS_DIR/orchestrate.md"
 
+echo ""
+log "To configure agents: $SKILLS_DIR/configure.sh"
 echo ""
 log "Done! Restart Claude Code, then try:"
 log "  /orchestrate \"add login feature\""
