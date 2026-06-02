@@ -217,11 +217,10 @@ python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
 
 The helper invokes Codex with a read-only design review prompt, writes `codex-design-review.md`, and requires a first-line `APPROVED:` or `REJECTED:` verdict.
 
-If rejected or unclear, report the feedback and stop with choices:
-
-1. Revise design.
-2. Override and proceed.
-3. Abort.
+The Codex design review is **advisory**. After running, read `codex-design-review.md`. If the verdict is REJECTED or UNCLEAR:
+- Summarize the specific concerns for the user (1-3 bullet points)
+- Proceed to the next phase by default
+- Only stop and ask the user if the concerns indicate a fundamental design flaw (e.g., security vulnerability, data loss risk, approach is technically infeasible)
 
 ## Phase 4.5: WRITE TESTS (Red)
 
@@ -378,6 +377,8 @@ On any agent failure, report and present choices:
 
 ## Phase 5.5: CLAUDE REVIEW GATE
 
+> **Note:** This Claude Review Gate is the primary blocking check for implementation quality. Codex (Phase 6) provides a secondary advisory opinion and does not block the pipeline.
+
 After each batch (or single implementation) completes, Claude performs a three-stage review:
 
 ### Stage 1: Test Results (Green Check)
@@ -419,13 +420,13 @@ python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
 
 The helper runs the detected or provided test command, writes `test-results.md`, asks Codex for a read-only implementation review, writes `codex-review.md`, and requires an `APPROVED:` verdict.
 
-On the first Phase 6 failure, automatically retry the failing task's Phase 5 once with `codexFeedback`:
+**If tests fail** (non-zero exit code): automatically retry the failing task's Phase 5 once with the test failure output as feedback:
 
 ```bash
 python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --model deepseek-v4-pro \
-  --is-retry --feedback "<codex feedback>"
+  --is-retry --feedback "<test failure output>"
 
 python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
@@ -438,6 +439,13 @@ On second failure, stop and report choices:
 2. Return to Phase 3 design.
 3. Commit as-is without merge.
 4. Abort.
+
+**If Codex review is REJECTED or UNCLEAR** (but tests pass): The Codex review is advisory. Read `codex-review.md` and:
+- Summarize the specific concerns for the user (1-3 bullet points)
+- Offer 3 choices:
+  1. Apply Codex feedback and re-run Phase 5 (fix first)
+  2. Proceed to Phase 7 as-is (ignore Codex feedback)
+  3. Abort
 
 ## Phase 7: COMPLETE
 
@@ -527,7 +535,7 @@ When Phase 5 (implement) returns `no_changes` with `"claimedSuccess": true` and 
 
 ## Safety Contract
 
-- Never auto-recover from failures except the single Phase 5 to Phase 6 retry.
+- Never auto-recover from failures except the single Phase 5 retry on test failures from Phase 6.
 - Never force push, force merge, reset hard, or delete branches with `-D`.
 - Never push before Phase 7.
 - Never allow Pi CLI implementation agents to commit or push.

@@ -1278,3 +1278,288 @@ def test_phase_implement_sequential_retry_noop_allowed_when_files_already_writte
     assert "src/a.py" in summary["phases"]["implement"].get("changedFiles", [])
 
 
+# ---------------------------------------------------------------------------
+# Helpers shared by advisory/strict-review tests
+# ---------------------------------------------------------------------------
+
+def _make_verify_design_artifact_dir(tmp_path: "Path") -> "Path":
+    """Create a minimal artifact dir for phase_verify_design tests."""
+    art = tmp_path / "art"
+    (art / "logs").mkdir(parents=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    orchestrate.write_json(art / "summary.json", {
+        "phases": {"design_plan": {"status": "success"}},
+        "worktree": str(wt),
+        "files": {},
+    })
+    (art / "design.md").write_text("# Design\n\nSome design content.\n")
+    return art
+
+
+def _make_review_test_artifact_dir(tmp_path: "Path") -> "Path":
+    """Create a minimal artifact dir for phase_review_test tests."""
+    art = tmp_path / "art"
+    (art / "logs").mkdir(parents=True)
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    orchestrate.write_json(art / "summary.json", {
+        "phases": {"implement": {"status": "success"}},
+        "worktree": str(wt),
+        "files": {},
+    })
+    (art / "design.md").write_text("# Design\n\nSome design content.\n")
+    return art
+
+
+def _advisory_args(*, strict: bool = False) -> "argparse.Namespace":
+    """Minimal parse_args Namespace for verify-design / review-test tests."""
+    flags = ["--phase", "verify-design", "--task", "t"]
+    if strict:
+        flags.append("--strict-review")
+    return orchestrate.parse_args(flags)
+
+
+def _review_test_args(*, strict: bool = False, test_command: str = "") -> "argparse.Namespace":
+    """Minimal parse_args Namespace for review-test tests."""
+    flags = ["--phase", "review-test", "--task", "t"]
+    if strict:
+        flags.append("--strict-review")
+    if test_command:
+        flags += ["--test-command", test_command]
+    return orchestrate.parse_args(flags)
+
+
+# ---------------------------------------------------------------------------
+# phase_verify_design – advisory mode (default, no --strict-review)
+# ---------------------------------------------------------------------------
+
+def test_verify_design_rejected_advisory_mode(tmp_path, capsys):
+    """REJECTED verdict in default mode returns 0 + advisory=True in summary."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args()
+    codex_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="REJECTED: bad design\nSome details.")
+    with patch("orchestrate.codex_exec", return_value=codex_ok):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc == 0, f"Expected 0, got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["verify_design"]
+    assert phase["status"] == "success", f"Expected success, got {phase['status']}"
+    assert phase.get("advisory") is True, "Expected advisory=True in phase record"
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True, "Expected advisory=True in printed JSON"
+    assert out["status"] == "success"
+
+
+def test_verify_design_rejected_strict_mode(tmp_path):
+    """REJECTED verdict with --strict-review returns non-zero (hard block)."""
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args(strict=True)
+    codex_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="REJECTED: bad design\nSome details.")
+    with patch("orchestrate.codex_exec", return_value=codex_ok):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc != 0, f"Expected non-zero exit in strict mode, got {rc}"
+
+
+def test_verify_design_unclear_advisory_mode(tmp_path, capsys):
+    """No APPROVED/REJECTED on first line → unclear → advisory mode returns 0."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args()
+    codex_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="The design looks interesting but needs more work.")
+    with patch("orchestrate.codex_exec", return_value=codex_ok):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc == 0, f"Expected 0 for unclear in advisory mode, got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["verify_design"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+
+
+def test_verify_design_timeout_advisory_mode(tmp_path, capsys):
+    """TimeoutExpired in default mode returns 0 + advisory."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args()
+    with patch("orchestrate.codex_exec", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc == 0, f"Expected 0 for timeout in advisory mode, got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["verify_design"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+
+
+def test_verify_design_timeout_strict_mode(tmp_path):
+    """TimeoutExpired with --strict-review returns non-zero."""
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args(strict=True)
+    with patch("orchestrate.codex_exec", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc != 0, f"Expected non-zero for timeout in strict mode, got {rc}"
+
+
+def test_verify_design_api_error_advisory_mode(tmp_path, capsys):
+    """Codex API error (non-zero exit + API-error pattern) → advisory in default mode."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args()
+    codex_fail = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="internal server error: 503")
+    with patch("orchestrate.codex_exec", return_value=codex_fail):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc == 0, f"Expected 0 for api-error in advisory mode, got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["verify_design"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+
+
+def test_verify_design_api_error_strict_mode(tmp_path):
+    """Codex API error with --strict-review → non-zero."""
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = _advisory_args(strict=True)
+    codex_fail = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="internal server error: 503")
+    with patch("orchestrate.codex_exec", return_value=codex_fail):
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc != 0, f"Expected non-zero for api-error in strict mode, got {rc}"
+
+
+def test_verify_design_approved_still_passes(tmp_path, capsys):
+    """APPROVED still passes cleanly in both default and strict mode."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    for strict in (False, True):
+        art = _make_verify_design_artifact_dir(tmp_path / f"strict{strict}")
+        args = _advisory_args(strict=strict)
+        codex_ok = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="APPROVED: looks great")
+        with patch("orchestrate.codex_exec", return_value=codex_ok):
+            rc = orchestrate.phase_verify_design(tmp_path, art, args)
+        out = _json.loads(capsys.readouterr().out)
+        assert rc == 0
+        assert out.get("advisory") is not True, "APPROVED must not set advisory"
+
+
+# ---------------------------------------------------------------------------
+# phase_review_test – advisory mode (default, no --strict-review)
+# ---------------------------------------------------------------------------
+
+def _mock_git_ok():
+    """Return a side_effect list for orchestrate.run that makes git calls succeed."""
+    ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    return ok
+
+
+def test_review_test_codex_rejected_tests_pass_advisory(tmp_path, capsys):
+    """Tests pass + Codex REJECTED → advisory mode returns 0 + advisory."""
+    import json as _json
+    art = _make_review_test_artifact_dir(tmp_path)
+    args = _review_test_args()
+    # test_command is empty so run_test_command is not called
+    codex_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="REJECTED: issues found\nDetails.")
+    git_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with patch("orchestrate.codex_exec", return_value=codex_ok), \
+         patch("orchestrate.run", return_value=git_ok):
+        rc = orchestrate.phase_review_test(tmp_path, art, args)
+    assert rc == 0, f"Expected 0 (advisory), got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["review_test"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+    assert out["status"] == "success"
+
+
+def test_review_test_codex_rejected_strict_mode(tmp_path):
+    """Tests pass + Codex REJECTED + --strict-review → non-zero."""
+    art = _make_review_test_artifact_dir(tmp_path)
+    args = _review_test_args(strict=True)
+    codex_ok = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="REJECTED: issues found\nDetails.")
+    git_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with patch("orchestrate.codex_exec", return_value=codex_ok), \
+         patch("orchestrate.run", return_value=git_ok):
+        rc = orchestrate.phase_review_test(tmp_path, art, args)
+    assert rc != 0, f"Expected non-zero in strict mode, got {rc}"
+
+
+def test_review_test_test_failure_both_modes_blocked(tmp_path):
+    """Test failures always block regardless of strict_review flag.
+
+    Regression guard: test_exit != 0 must never be advisory.
+    """
+    for strict in (False, True):
+        art = _make_review_test_artifact_dir(tmp_path / f"strict{strict}")
+        args = _review_test_args(strict=strict, test_command="npm test")
+        test_fail = subprocess.CompletedProcess(
+            args=[], returncode=1, stdout="1 test failed")
+        codex_ok = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout="REJECTED: tests failed\nDetails.")
+        git_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+        with patch("orchestrate.run_test_command", return_value=test_fail), \
+             patch("orchestrate.codex_exec", return_value=codex_ok), \
+             patch("orchestrate.run", return_value=git_ok):
+            rc = orchestrate.phase_review_test(tmp_path, art, args)
+        assert rc != 0, (
+            f"Test failure must block regardless of strict={strict}, got rc={rc}"
+        )
+
+
+def test_review_test_codex_api_error_advisory(tmp_path, capsys):
+    """Codex API error in review-test → advisory in default mode."""
+    import json as _json
+    art = _make_review_test_artifact_dir(tmp_path)
+    args = _review_test_args()
+    codex_fail = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="rate_limit_exceeded for this model")
+    git_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with patch("orchestrate.codex_exec", return_value=codex_fail), \
+         patch("orchestrate.run", return_value=git_ok):
+        rc = orchestrate.phase_review_test(tmp_path, art, args)
+    assert rc == 0, f"Expected 0 (advisory) for api-error, got {rc}"
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["review_test"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+
+
+def test_review_test_codex_api_error_strict_mode(tmp_path):
+    """Codex API error in review-test + --strict-review → non-zero."""
+    art = _make_review_test_artifact_dir(tmp_path)
+    args = _review_test_args(strict=True)
+    codex_fail = subprocess.CompletedProcess(
+        args=[], returncode=1, stdout="rate_limit_exceeded for this model")
+    git_ok = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
+    with patch("orchestrate.codex_exec", return_value=codex_fail), \
+         patch("orchestrate.run", return_value=git_ok):
+        rc = orchestrate.phase_review_test(tmp_path, art, args)
+    assert rc != 0, f"Expected non-zero for api-error in strict mode, got {rc}"
+
+
+def test_strict_review_flag_parses():
+    """--strict-review flag must be recognized by parse_args."""
+    args = orchestrate.parse_args(
+        ["--phase", "verify-design", "--task", "t", "--strict-review"])
+    assert args.strict_review is True
+
+
+def test_strict_review_flag_defaults_false():
+    """--strict-review must default to False."""
+    args = orchestrate.parse_args(["--phase", "verify-design", "--task", "t"])
+    assert args.strict_review is False
