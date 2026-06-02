@@ -72,6 +72,7 @@ cd fiftybox && ./install.sh
 | Flag | Description |
 |------|-------------|
 | `--skip-verify` | Skip the Design phase (Codex verification). Use when design is already done and you only need implementation (`/pi-execute`). |
+| `--strict-review` | Restore hard-gating on Codex verdicts (Phase 4 design verify + Phase 6 code review). Default: advisory — REJECTED/UNCLEAR is recorded and surfaced but does not stop the pipeline. Test failures always block. |
 
 ---
 
@@ -82,10 +83,10 @@ cd fiftybox && ./install.sh
 | 0 Setup | Claude | Creates isolated git worktree + artifact dir |
 | 1 Explore | explore_agent (default: Pi) | Maps codebase, identifies relevant files |
 | 2 Clarify | Claude | Confirms intent with user if ambiguous |
-| 3 Design | Codex | Verifies architecture, flags risks |
+| 3 Design | Codex (advisory) | Verifies architecture, flags risks |
 | 4 Test | Claude | Writes failing tests (Red) |
 | 5 Implement | implement_agent (default: Pi) | Implements to pass tests (Green) |
-| 6 Review | Codex | Reviews code, runs tests |
+| 6 Review | Codex (advisory) + tests (blocking) | Reviews code, runs tests |
 | 7 Commit | Claude | Commits → merges → pushes |
 
 ---
