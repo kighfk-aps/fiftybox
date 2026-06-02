@@ -248,7 +248,34 @@ Batch 3: [Task F]                  ← depends on Batch 2, run alone
 
 Write the decomposition to `<artifactDir>/task-batches.md`.
 
-If the design has only a single task or all tasks are tightly coupled, skip parallelism and use sequential mode.
+### task-batches.md JSON Block
+
+At the end of `task-batches.md`, embed a machine-readable JSON block that lists every
+implementation task in document order (batches flattened into a single sequential
+list — the harness runs them one at a time, not in parallel):
+
+```json
+{
+  "tasks": [
+    {
+      "name": "Task A",
+      "description": "Full task description from the batch breakdown",
+      "files": ["src/foo.py", "src/bar.py"]
+    },
+    {
+      "name": "Task B",
+      "description": "Full task description from the batch breakdown",
+      "files": ["tests/test_foo.py"]
+    }
+  ]
+}
+```
+
+- `name` — short label for the task (required)
+- `description` — full task text including what to implement (required)
+- `files` — list of file paths this task owns; only these may be modified (empty list = no file constraint)
+- Tasks are executed sequentially in the order listed, regardless of batch grouping in the Markdown above
+- If the design has only a single task or all tasks are tightly coupled, either use a single-entry list for sequential execution or omit the JSON block entirely to fall back to single-call mode
 
 ### Test Writing
 

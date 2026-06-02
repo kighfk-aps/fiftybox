@@ -576,3 +576,705 @@ def test_cleanup_kills_watcher(tmp_path):
         mock_run.return_value = subprocess.CompletedProcess(args=[], returncode=0, stdout="")
         orchestrate.phase_cleanup(tmp_path, art, args)
     mock_kill.assert_called_once()
+
+
+# --- parse_task_batches ---
+
+
+def test_parse_task_batches_returns_empty_for_missing_file(tmp_path):
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_returns_empty_for_no_json_block(tmp_path):
+    (tmp_path / "task-batches.md").write_text("# Just some markdown\n\nNo json here.\n")
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_returns_empty_for_malformed_json(tmp_path):
+    (tmp_path / "task-batches.md").write_text(
+        "```json\n{this is not valid json!}\n```\n"
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_returns_empty_for_non_dict_json(tmp_path):
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n["a", "b"]\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_returns_empty_for_missing_tasks_key(tmp_path):
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"other": "value"}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_parses_valid_tasks(tmp_path):
+    (tmp_path / "task-batches.md").write_text(
+        '## Batch 1\n\nSome markdown...\n\n```json\n{\n'
+        '  "tasks": [\n'
+        '    {"name": "Task A", "description": "Build the thing",'
+        '     "files": ["src/foo.py", "src/bar.py"]},\n'
+        '    {"name": "Task B", "description": "Add tests",'
+        '     "files": ["tests/test_foo.py"]}\n'
+        '  ]\n}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert len(result) == 2
+    assert result[0] == {
+        "name": "Task A",
+        "description": "Build the thing",
+        "files": ["src/foo.py", "src/bar.py"],
+    }
+    assert result[1] == {
+        "name": "Task B",
+        "description": "Add tests",
+        "files": ["tests/test_foo.py"],
+    }
+
+
+def test_parse_task_batches_preserves_document_order(tmp_path):
+    """Tasks appear in the order listed in JSON, regardless of Markdown headers."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": ['
+        '{"name": "First", "description": "d1"}, '
+        '{"name": "Second", "description": "d2"}, '
+        '{"name": "Third", "description": "d3"}'
+        ']}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert [t["name"] for t in result] == ["First", "Second", "Third"]
+
+
+def test_parse_task_batches_returns_empty_for_entries_without_name(tmp_path):
+    """Any entry without a name invalidates the entire block (all-or-nothing)."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"description": "No name here"},\n'
+        '  {"name": "Valid", "description": "has desc"}\n'
+        ']}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_handles_missing_optional_keys(tmp_path):
+    # description is now required; files is the truly optional key
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "Minimal", "description": "do it"}]}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert len(result) == 1
+    assert result[0]["name"] == "Minimal"
+    assert result[0]["description"] == "do it"
+    assert result[0]["files"] == []
+
+
+def test_parse_task_batches_returns_empty_when_any_named_task_lacks_description(tmp_path):
+    """Named tasks with missing or empty description invalidate the entire block (all-or-nothing)."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "No desc"},\n'
+        '  {"name": "Valid", "description": "do something"}\n'
+        ']}\n```\n'
+    )
+    # "No desc" is a named task without description → entire block fails → fallback
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_handles_non_list_files(tmp_path):
+    # Non-list files field invalidates the entire block (all-or-nothing fail-safe).
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Bad", "description": "D", "files": "not-a-list"},\n'
+        '  {"name": "Good", "description": "D", "files": ["src/a.py"]}\n'
+        ']}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_returns_empty_for_non_dict_entries(tmp_path):
+    """Non-dict entries invalidate the entire block (all-or-nothing)."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": ["string", 42, {"name": "Valid", "description": "D"}]}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_parse_task_batches_uses_last_json_block(tmp_path):
+    """Multiple json blocks: only the last one is used (earlier ones may be prose examples)."""
+    (tmp_path / "task-batches.md").write_text(
+        "Example block:\n"
+        '```json\n{"tasks": [{"name": "Example", "description": "ignore me"}]}\n```\n'
+        "\nActual block:\n"
+        '```json\n{"tasks": [{"name": "Real", "description": "use me", "files": ["src/a.py"]}]}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert len(result) == 1
+    assert result[0]["name"] == "Real"
+
+
+def test_parse_task_batches_rejects_path_traversal(tmp_path):
+    """Files with .. or absolute paths invalidate the entire block (all-or-nothing)."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "T", "description": "D", "files":'
+        ' ["safe/file.py", "../etc/passwd", "/absolute/path", "ok/file.py"]}]}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+# --- build_task_prompt ---
+
+
+def test_build_task_prompt_includes_task_name_and_fenced_description():
+    task = {"name": "My Task", "description": "Do something important", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent")
+    assert "**My Task**:" in prompt
+    assert "<user-task>" in prompt
+    assert "Do something important" in prompt
+    assert "</user-task>" in prompt
+
+
+def test_build_task_prompt_includes_file_ownership():
+    task = {"name": "T", "description": "D", "files": ["src/a.py", "lib/b.py"]}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent")
+    assert "This task owns: src/a.py, lib/b.py" in prompt
+    assert "Modify ONLY these files" in prompt
+
+
+def test_build_task_prompt_handles_empty_files_list():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent")
+    assert "no file ownership constraint" in prompt
+    assert "Modify ONLY these files" not in prompt
+
+
+def test_build_task_prompt_includes_full_design_and_intent():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "DESIGN_CONTENT", "INTENT_CONTENT")
+    assert "DESIGN_CONTENT" in prompt
+    assert "INTENT_CONTENT" in prompt
+
+
+def test_build_task_prompt_includes_fenced_feedback_when_present():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(
+        task, "design", "intent", feedback="Fix the bug"
+    )
+    assert "## Feedback from Previous Attempt" in prompt
+    assert "<user-feedback>" in prompt
+    assert "Fix the bug" in prompt
+    assert "</user-feedback>" in prompt
+
+
+def test_build_task_prompt_no_feedback_section_when_empty():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent", feedback="")
+    assert "Feedback from Previous Attempt" not in prompt
+
+
+def test_build_task_prompt_includes_constraints():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent")
+    assert "Do NOT implement other tasks in this prompt" in prompt
+    assert "If a required file does not yet exist, create it" in prompt
+
+
+def test_build_task_prompt_includes_final_response_section():
+    task = {"name": "T", "description": "D", "files": []}
+    prompt = orchestrate.build_task_prompt(task, "design", "intent")
+    assert "## Final Response" in prompt
+
+
+# --- phase_implement sequential integration ---
+
+
+def test_phase_implement_falls_back_without_batches(tmp_path):
+    """No task-batches.md → single-call path runs unchanged."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design\nSome design content")
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    ok_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Done.\nchanged: src/app.py\n"
+    )
+    with patch("orchestrate.run", return_value=ok_result) as mock_run, \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", return_value=["src/app.py"]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    assert rc == 0
+    # Single call path: exactly one agent command was run
+    assert mock_run.call_count >= 1
+    # The single prompt file exists (not per-task files)
+    assert (artifact_dir / "implement-prompt.md").exists()
+    assert (artifact_dir / "implement-log.md").exists()
+    # No per-task artifacts
+    assert not (artifact_dir / "implement-prompt-task-0.md").exists()
+    assert not (artifact_dir / "implement-log-task-0.md").exists()
+
+
+def test_phase_implement_runs_one_pi_call_per_task(tmp_path):
+    """task-batches.md with 3 tasks → 3 agent calls."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design\nSome design content")
+    # files: [] means no ownership enforcement — this test verifies loop count, not scoping
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Task 0", "description": "First", "files": []},\n'
+        '  {"name": "Task 1", "description": "Second", "files": []},\n'
+        '  {"name": "Task 2", "description": "Third", "files": []}\n'
+        ']}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    ok_result = subprocess.CompletedProcess(
+        args=[], returncode=0, stdout="Done.\n"
+    )
+    call_count = [0]
+
+    def fake_changed_files(_root, _before):
+        call_count[0] += 1
+        return [f"src/task{call_count[0] - 1}.py"]
+
+    with patch("orchestrate.run", return_value=ok_result) as mock_run, \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", side_effect=fake_changed_files):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    assert rc == 0
+    # 3 tasks → 3 agent calls
+    assert mock_run.call_count == 3
+    # Per-task prompt and log files exist
+    for i in range(3):
+        assert (artifact_dir / f"implement-prompt-task-{i}.md").exists()
+        assert (artifact_dir / f"implement-log-task-{i}.md").exists()
+    # Aggregate log exists
+    assert (artifact_dir / "implement-log.md").exists()
+    # Summary records success with all changed files
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    impl = summary["phases"]["implement"]
+    assert impl["status"] == "success"
+    assert len(impl["changedFiles"]) == 3
+
+
+def test_phase_implement_stops_on_task_failure(tmp_path):
+    """Task 1 fails → loop stops immediately, task 2 never runs."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design\nSome design content")
+    # files: [] → no ownership enforcement; this test verifies stop-on-failure behavior
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Task 0", "description": "First", "files": []},\n'
+        '  {"name": "Task 1", "description": "Second", "files": []},\n'
+        '  {"name": "Task 2", "description": "Third", "files": []}\n'
+        ']}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    # Task 0 succeeds, Task 1 fails
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    fail_result = subprocess.CompletedProcess(args=[], returncode=1, stdout="FAILED")
+
+    call_count = {"count": 0}
+
+    def fake_changed_files(_root, _before):
+        result = [f"src/changed{call_count['count']}.py"]
+        call_count["count"] += 1
+        return result
+
+    with patch("orchestrate.run", side_effect=[ok_result, fail_result]) as mock_run, \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", side_effect=fake_changed_files):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+
+    assert rc != 0
+    # Only 2 calls were made (task 0 succeeded, task 1 failed, task 2 never started)
+    assert mock_run.call_count == 2
+    # failed_task_index is recorded
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert summary["failed_task_index"] == 1
+    impl = summary["phases"]["implement"]
+    assert impl["status"] == "failed"
+    assert impl["failed_task_index"] == 1
+    # changedFiles = confirmed successful tasks only (task 0)
+    assert "src/changed0.py" in impl["changedFiles"]
+    # partialChangedFiles = failed task's partial edits (task 1), NOT in confirmed changedFiles
+    assert "src/changed1.py" not in impl["changedFiles"]
+    assert "src/changed1.py" in impl.get("partialChangedFiles", [])
+    # Task 0 log exists, task 1 log exists (for failed task), task 2 log does NOT
+    assert (artifact_dir / "implement-log-task-0.md").exists()
+    assert (artifact_dir / "implement-log-task-1.md").exists()
+    assert not (artifact_dir / "implement-log-task-2.md").exists()
+
+
+def test_phase_implement_retry_resumes_from_failed_task(tmp_path):
+    """--is-retry with failed_task_index=1 skips task 0, starts at task 1."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design\nSome design content")
+    # files: [] → no ownership enforcement; this test verifies retry resume behavior
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Task 0", "description": "First", "files": []},\n'
+        '  {"name": "Task 1", "description": "Second", "files": []},\n'
+        '  {"name": "Task 2", "description": "Third", "files": []}\n'
+        ']}\n```\n'
+    )
+    # summary.json records changedFiles from the previous attempt (task 0's output)
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {
+            "worktree": str(worktree),
+            "phases": {"implement": {
+                "status": "failed",
+                "failed_task_index": 1,
+                "changedFiles": ["src/a.py"],  # task 0 completed previously
+            }},
+            "files": {},
+            "failed_task_index": 1,
+        },
+    )
+    # Also create the previous task 0 log so per_task_status pre-population works
+    (artifact_dir / "implement-log-task-0.md").write_text("# Task 0 log\n")
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir), "--is-retry",
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    call_count = [0]
+
+    def fake_changed_files(_root, _before=None):
+        call_count[0] += 1
+        return [f"src/changed{call_count[0]}.py"]
+
+    with patch("orchestrate.run", return_value=ok_result) as mock_run, \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", side_effect=fake_changed_files):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+
+    assert rc == 0
+    # Only 2 calls to run: tasks 1 and 2 (task 0 skipped)
+    assert mock_run.call_count == 2
+    # Task 0 prompt NOT created (skipped), but pre-existing log remains
+    assert not (artifact_dir / "implement-prompt-task-0.md").exists()
+    # Tasks 1 and 2 produced
+    assert (artifact_dir / "implement-prompt-task-1.md").exists()
+    assert (artifact_dir / "implement-prompt-task-2.md").exists()
+    # Aggregate log always uses implement-log.md (stable artifact name)
+    assert (artifact_dir / "implement-log.md").exists()
+    # Aggregate log includes status for task 0 (from pre-population)
+    agg = (artifact_dir / "implement-log.md").read_text()
+    assert "Task 0" in agg
+    # Final changedFiles includes pre-seeded files from task 0 plus new changes
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert "src/a.py" in summary["phases"]["implement"]["changedFiles"]
+
+
+def test_phase_implement_sequential_timeout_records_index(tmp_path):
+    """Timeout on a task records failed_task_index."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Task 0", "description": "First", "files": ["src/a.py"]},\n'
+        '  {"name": "Task 1", "description": "Second", "files": ["src/b.py"]}\n'
+        ']}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+        "--implementation-timeout", "3",
+    ])
+
+    with patch("orchestrate.run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=3)), \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", return_value=[]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+
+    assert rc == 124
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert summary["failed_task_index"] == 0
+    assert summary["phases"]["implement"]["status"] == "timeout"
+
+
+def test_phase_implement_sequential_writes_aggregate_log(tmp_path):
+    """Aggregate implement-log.md lists all changed files across tasks."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    # Declare all files each task will produce, so ownership enforcement passes
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Task A", "description": "First", "files": ["src/a.py"]},\n'
+        '  {"name": "Task B", "description": "Second", "files": ["src/b.py", "lib/helper.py"]}\n'
+        ']}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+
+    files_per_task = [["src/a.py"], ["src/b.py", "lib/helper.py"]]
+    call_idx = [-1]
+
+    def fake_changed_files(_root, _before):
+        call_idx[0] += 1
+        return files_per_task[call_idx[0]]
+
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.changed_files", side_effect=fake_changed_files):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+
+    assert rc == 0
+    agg = (artifact_dir / "implement-log.md").read_text()
+    assert "src/a.py" in agg
+    assert "src/b.py" in agg
+    assert "lib/helper.py" in agg
+    assert "Per-Task Status" in agg
+    assert "All Changed Files" in agg
+
+
+def test_parse_task_batches_empty_tasks_list_returns_empty(tmp_path):
+    """Empty tasks array → fallback to single-call."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": []}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_phase_implement_fallback_on_empty_tasks(tmp_path):
+    """task-batches.md with empty tasks array → single-call path."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": []}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="Done.")
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value=set()), \
+         patch("orchestrate.changed_files", return_value=["src/app.py"]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    assert rc == 0
+    # Single-call prompt file, not per-task files
+    assert (artifact_dir / "implement-prompt.md").exists()
+    assert not (artifact_dir / "implement-prompt-task-0.md").exists()
+
+
+def test_phase_implement_sequential_aggregate_log_always_implement_log(tmp_path):
+    """On retry, aggregate log still uses implement-log.md (stable artifact name)."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "T", "description": "D", "files": ["src/a.py"]}]}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir), "--is-retry",
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value=set()), \
+         patch("orchestrate.changed_files", return_value=["src/a.py"]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    assert rc == 0
+    assert (artifact_dir / "implement-log.md").exists()
+
+
+def test_phase_implement_sequential_fails_on_ownership_violation(tmp_path):
+    """Task that modifies undeclared files causes the phase to FAIL (hard enforcement)."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "T", "description": "D", "files": ["src/a.py"]}]}\n```\n'
+    )
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {"worktree": str(worktree), "phases": {}, "files": {}},
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir),
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    # Task changes src/a.py (declared) AND src/unrelated.py (violation)
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value=set()), \
+         patch("orchestrate.changed_files", return_value=["src/a.py", "src/unrelated.py"]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    # Phase fails: file ownership is hard-enforced
+    assert rc != 0
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert summary["phases"]["implement"]["status"] == "failed"
+    assert summary["failed_task_index"] == 0
+
+
+def test_phase_implement_sequential_no_op_retry_fails(tmp_path):
+    """Any task (including on retry) that exits 0 with no file changes → FAILS."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "T", "description": "D", "files": ["src/a.py"]}]}\n```\n'
+    )
+    # Previous run failed on task 0; changedFiles contains only confirmed successful task files
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {
+            "worktree": str(worktree),
+            "phases": {"implement": {
+                "status": "failed",
+                "failed_task_index": 0,
+                "changedFiles": [],  # task 0 was the first and it failed — no confirmed files
+            }},
+            "files": {},
+            "failed_task_index": 0,
+        },
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir), "--is-retry",
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    # Resumed task exits 0 but changes no new files — retry no-op
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value=set()), \
+         patch("orchestrate.changed_files", return_value=[]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    # Phase must FAIL: the retried task did nothing
+    assert rc != 0
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert summary["phases"]["implement"]["status"] in ("failed", "no_changes")
+
+
+def test_parse_task_batches_returns_empty_when_all_paths_sanitized_away(tmp_path):
+    """If a task declares files but all paths are invalid, the whole block is rejected."""
+    (tmp_path / "task-batches.md").write_text(
+        '```json\n{"tasks": [\n'
+        '  {"name": "Bad", "description": "D", "files": ["../escape", "/abs/path"]},\n'
+        '  {"name": "Good", "description": "D", "files": ["src/ok.py"]}\n'
+        ']}\n```\n'
+    )
+    result = orchestrate.parse_task_batches(tmp_path)
+    assert result == []
+
+
+def test_phase_implement_sequential_retry_noop_allowed_when_files_already_written(tmp_path):
+    """Retry no-op succeeds when declared files are pre-seeded from partialChangedFiles."""
+    worktree = tmp_path / "wt"
+    worktree.mkdir()
+    artifact_dir = tmp_path / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "design.md").write_text("# Design")
+    (artifact_dir / "task-batches.md").write_text(
+        '```json\n{"tasks": [{"name": "T", "description": "D", "files": ["src/a.py"]}]}\n```\n'
+    )
+    # Previous run timed out after writing src/a.py — captured in partialChangedFiles.
+    orchestrate.write_json(
+        artifact_dir / "summary.json",
+        {
+            "worktree": str(worktree),
+            "phases": {"implement": {
+                "status": "timeout",
+                "failed_task_index": 0,
+                "changedFiles": [],
+                "partialChangedFiles": ["src/a.py"],
+            }},
+            "files": {},
+            "failed_task_index": 0,
+        },
+    )
+    args = orchestrate.parse_args([
+        "--phase", "implement", "--task", "build feature",
+        "--artifact-dir", str(artifact_dir), "--is-retry",
+    ])
+    ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
+    # Retry: agent exits 0 with no new file changes — the file was already correct on disk.
+    with patch("orchestrate.run", return_value=ok_result), \
+         patch("orchestrate.repo_snapshot", return_value=set()), \
+         patch("orchestrate.changed_files", return_value=[]):
+        rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
+    # Must SUCCEED: declared files were pre-seeded from partialChangedFiles.
+    assert rc == 0
+    summary = orchestrate.read_json(artifact_dir / "summary.json")
+    assert summary["phases"]["implement"]["status"] == "success"
+    assert "src/a.py" in summary["phases"]["implement"].get("changedFiles", [])
+
+

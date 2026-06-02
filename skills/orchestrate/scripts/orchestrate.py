@@ -13,7 +13,7 @@ import signal
 import subprocess
 import sys
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -547,6 +547,115 @@ def slugify(text: str) -> str:
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def parse_task_batches(artifact_dir: Path) -> list[dict[str, Any]]:
+    """Extract tasks from the JSON block in task-batches.md.
+
+    Returns an ordered list of task dicts (name, description, files).
+    Returns [] if the file is missing, contains no JSON block, or the
+    JSON is malformed / missing required keys.
+    """
+    path = artifact_dir / "task-batches.md"
+    if not path.exists():
+        return []
+    try:
+        content = path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return []
+    # Use the LAST ```json block in the file — earlier blocks may be prose examples.
+    matches = re.findall(r"```json\s*\n(.*?)\n```", content, re.DOTALL)
+    if not matches:
+        return []
+    try:
+        data = json.loads(matches[-1])
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(data, dict):
+        return []
+    raw_tasks = data.get("tasks", [])
+    if not isinstance(raw_tasks, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for t in raw_tasks:
+        # Any malformed entry (non-dict, missing name, missing description, invalid files)
+        # invalidates the entire block — partial task lists can silently omit work.
+        if not isinstance(t, dict):
+            return []
+        name = t.get("name", "")
+        if not name:
+            return []
+        description = str(t.get("description", "")).strip()
+        if not description:
+            return []
+        raw_files = t.get("files")
+        if raw_files is None:
+            safe_files: list[str] = []  # absent = no ownership constraint (valid)
+        elif not isinstance(raw_files, list):
+            return []
+        else:
+            safe_files = []
+            for f in raw_files:
+                if not isinstance(f, str):
+                    return []  # non-string path → entire block invalid
+                p = f.strip()
+                if not p or p.startswith("/") or ".." in p.split("/"):
+                    return []  # invalid path → entire block invalid (scope must not be silently narrowed)
+                # Normalize to canonical repo-relative form (strip ./ etc.)
+                safe_files.append(str(PurePosixPath(p)))
+        result.append({
+            "name": str(name),
+            "description": description,
+            "files": safe_files,
+        })
+    return result
+
+
+def build_task_prompt(
+    task: dict[str, Any],
+    design_content: str,
+    intent_content: str,
+    feedback: str = "",
+) -> str:
+    """Build a narrowed per-task prompt scoped to the task's owned files."""
+    name = task["name"]
+    description = task.get("description", "")
+    files = task.get("files", [])
+    fenced_description = fence_user_input("task", description) if description else ""
+    if files:
+        ownership_section = (
+            f"This task owns: {', '.join(files)}\n"
+            "Modify ONLY these files. All other files are read-only context."
+        )
+    else:
+        ownership_section = "This task has no file ownership constraint."
+    prompt = f"""## Design Specification
+{design_content}
+
+## Intent Summary
+{intent_content}
+
+## Current Task
+**{name}**:
+{fenced_description}
+
+## File Ownership
+{ownership_section}
+
+## Constraints
+- Edit workspace files directly to implement this task only.
+- Do NOT implement other tasks in this prompt.
+- Do NOT commit, push, deploy, reset, or run destructive git operations.
+- If a required file does not yet exist, create it.
+
+## Final Response
+- List all changed/created files.
+- State what verification you ran or why you could not run it.
+"""
+    if feedback:
+        fenced_feedback = fence_user_input("feedback", feedback)
+        prompt += f"\n## Feedback from Previous Attempt\n\n{fenced_feedback}\n"
+    return prompt
 
 
 def phase_record(status: str, logger: PhaseLogger, **extra: Any) -> dict[str, Any]:
@@ -1568,6 +1677,371 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
     return 0
 
 
+def _write_partial_agg_log(
+    artifact_dir: Path,
+    per_task_status: list[dict[str, Any]],
+    failed_idx: int,
+    failed_name: str,
+    failed_label: str,
+    all_changed: list[str],
+    partial_changed: list[str] | None = None,
+) -> None:
+    agg = "# Implementation Log (Sequential - INCOMPLETE)\n\n## Per-Task Status\n\n"
+    for st in per_task_status:
+        agg += f"- Task {st['index']} ({st['name']}): {st['status']} ({len(st['changedFiles'])} files)\n"
+    agg += f"- Task {failed_idx} ({failed_name}): {failed_label}\n"
+    agg += "\n## Confirmed Changed Files (successful tasks)\n\n"
+    agg += "".join(f"- {p}\n" for p in all_changed) or "- (none)\n"
+    if partial_changed:
+        agg += "\n## Partial Edits from Failed/Timed-Out Task (on-disk, not confirmed)\n\n"
+        agg += "".join(f"- {p}\n" for p in partial_changed)
+    (artifact_dir / "implement-log.md").write_text(agg, encoding="utf-8")
+
+
+def _implement_sequential(
+    *,
+    tasks: list[dict[str, Any]],
+    root: Path,
+    artifact_dir: Path,
+    args: argparse.Namespace,
+    summary: dict[str, Any],
+    worktree: Path,
+    logger: PhaseLogger,
+    agent_config: dict[str, Any],
+    design_content: str,
+    intent_content: str,
+    feedback: str,
+    is_retry: bool,
+) -> int:
+    """Run Pi CLI once per task sequentially. Stop on first failure.
+
+    Writes implement-log-task-{n}.md per task and an aggregate
+    implement-log.md.  On failure records ``failed_task_index`` in
+    summary.json so that ``--is-retry`` can resume from the failed task.
+    """
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["implement_agent"]
+
+    # Dry-run guard: short-circuit without invoking agents
+    if args.dry_run:
+        logger.log("[DRY RUN] Skipping sequential task implementation")
+        dry_log = "# Implementation Log (Sequential)\n\nDry run skipped task execution.\n"
+        agg_log_path = artifact_dir / "implement-log.md"
+        agg_log_path.write_text(dry_log, encoding="utf-8")
+        logger.finish(0, "dry_run")
+        summary["phases"]["implement"] = phase_record("dry_run", logger, changedFiles=[])
+        summary.setdefault("files", {})["implementLog"] = str(agg_log_path)
+        write_json(artifact_dir / "summary.json", summary)
+        print(json.dumps({"status": "dry_run", "phase": "implement", "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":")))
+        return 0
+
+    # Retry resume: determine which task to start from
+    start_index = 0
+    if is_retry:
+        prev_failed = summary.get("failed_task_index")
+        if isinstance(prev_failed, int) and 0 <= prev_failed < len(tasks):
+            start_index = prev_failed
+            logger.log(f"[RETRY] Resuming from task index {start_index} (previously failed)")
+        elif isinstance(prev_failed, int) and prev_failed >= len(tasks):
+            logger.log("[RETRY] failed_task_index past end of task list — starting fresh")
+
+    # On retry, pre-seed all_changed from the previous run's changedFiles list
+    # (stored in summary.json when the phase failed). Do NOT call changed_files(worktree)
+    # here — that would capture everything on disk and make the per-task no-op check unreliable.
+    prev_changed: list[str] = []
+    prev_impl: dict[str, Any] = {}
+    if is_retry:
+        prev_impl = summary.get("phases", {}).get("implement", {})
+        # Pre-seed from both confirmed changedFiles and partialChangedFiles of the failed task.
+        # This ensures files written before a timeout are tracked in the final success record.
+        seen: set[str] = set()
+        for f in list(prev_impl.get("changedFiles") or []) + list(prev_impl.get("partialChangedFiles") or []):
+            if f not in seen:
+                seen.add(f)
+                prev_changed.append(f)
+        logger.log(f"[RETRY] Pre-seeding {len(prev_changed)} files from previous run (changedFiles + partialChangedFiles)")
+    all_changed: list[str] = list(prev_changed)
+
+    # Pre-populate per_task_status with entries for already-completed tasks (0..start_index-1)
+    # so the aggregate log covers the full run, not just the current attempt.
+    per_task_status: list[dict[str, Any]] = []
+    for pre_idx in range(start_index):
+        task_log_path = artifact_dir / f"implement-log-task-{pre_idx}.md"
+        per_task_status.append({
+            "index": pre_idx,
+            "name": tasks[pre_idx].get("name", f"task-{pre_idx}"),
+            "status": "success (previous attempt)",
+            "changedFiles": [],  # individual file lists not stored; summary has the aggregate
+            "log": str(task_log_path),
+        })
+
+    for idx in range(start_index, len(tasks)):
+        task = tasks[idx]
+        task_name = task.get("name", f"task-{idx}")
+        declared_files: list[str] = task.get("files") or []
+        logger.log(f"[TASK {idx}] Starting: {task_name}")
+        if not declared_files:
+            logger.log(f"[TASK {idx}] WARNING: no files listed in task-batches.md for '{task_name}'. Agent may modify unintended files.")
+
+        # Build and write per-task prompt
+        task_prompt = build_task_prompt(
+            task, design_content, intent_content,
+            feedback=feedback if idx == start_index else "",
+        )
+        prompt_path = artifact_dir / f"implement-prompt-task-{idx}.md"
+        prompt_path.write_text(task_prompt, encoding="utf-8")
+
+        # Snapshot repo before this task
+        before_files = repo_snapshot(worktree)
+
+        # Build agent command
+        try:
+            cmd = build_agent_cmd(
+                agent_name, agent_config,
+                prompt=task_prompt, task=f"{task_name}: {task.get('description', '')}",
+                model=args.model, provider=args.provider,
+                adapters_dir=adapters_dir,
+            )
+        except ValueError as exc:
+            logger.log(f"[TASK {idx}] Agent error: {exc}")
+            logger.finish(1, "failed")
+            summary["failed_task_index"] = idx
+            summary["phases"]["implement"] = phase_record(
+                "failed", logger, attempt=2 if is_retry else 1,
+                failed_task_index=idx, error=str(exc),
+                changedFiles=all_changed,  # confirmed successful tasks before this error
+            )
+            write_json(artifact_dir / "summary.json", summary)
+            _write_partial_agg_log(artifact_dir, per_task_status, idx, task_name,
+                                   "FAILED (agent error)", all_changed)
+            return fail_json(
+                phase="implement",
+                error=f"Task {idx} ({task_name}): agent error: {exc}",
+                artifact_dir=artifact_dir,
+                extra={"failed_task_index": idx},
+            )
+        if cmd[0].endswith(".sh"):
+            cmd = ["bash"] + cmd
+
+        # Run agent
+        try:
+            result_proc = run(cmd, worktree, timeout=args.implementation_timeout)
+        except subprocess.TimeoutExpired as exc:
+            logger.log(f"[TASK {idx}] Timeout ({args.implementation_timeout}s)")
+            # Capture whatever the subprocess managed to write before timing out
+            timeout_changed = changed_files(worktree, before_files)
+            if declared_files and timeout_changed:
+                declared_norm = {str(PurePosixPath(f)) for f in declared_files}
+                t_violations = [f for f in timeout_changed if str(PurePosixPath(f)) not in declared_norm]
+                if t_violations:
+                    logger.log(f"[TASK {idx}] OWNERSHIP VIOLATION in partial timeout edits: " + ", ".join(t_violations))
+            partial_stdout = (getattr(exc, "stdout", None) or "").strip()
+            timeout_log = f"# Task {idx} Implementation Log\n\n"
+            timeout_log += f"## Status\n\nTIMEOUT ({args.implementation_timeout}s)\n\n"
+            timeout_log += f"## Task\n\n{task_name}: {task.get('description', '')}\n\n"
+            timeout_log += "## Changed Files (partial)\n\n"
+            timeout_log += "".join(f"- {p}\n" for p in timeout_changed) or "- (none)\n"
+            timeout_log += f"\n## {agent_name} Output (partial)\n\n```\n{partial_stdout or '(no output captured before timeout)'}\n```\n"
+            (artifact_dir / f"implement-log-task-{idx}.md").write_text(timeout_log, encoding="utf-8")
+            logger.finish(124, "failed")
+            summary["failed_task_index"] = idx
+            summary["phases"]["implement"] = phase_record(
+                "timeout", logger, attempt=2 if is_retry else 1,
+                failed_task_index=idx,
+                changedFiles=all_changed,           # confirmed successful tasks only
+                partialChangedFiles=timeout_changed,  # failed task partial edits
+            )
+            write_json(artifact_dir / "summary.json", summary)
+            _write_partial_agg_log(artifact_dir, per_task_status, idx, task_name,
+                                   f"TIMEOUT ({len(timeout_changed)} partial)", all_changed,
+                                   partial_changed=timeout_changed)
+            return fail_json(
+                phase="implement",
+                error=f"Task {idx} ({task_name}): timeout ({args.implementation_timeout}s)",
+                artifact_dir=artifact_dir,
+                exit_code=124,
+                extra={"failed_task_index": idx},
+            )
+
+        task_changed = changed_files(worktree, before_files)
+        task_succeeded = result_proc.returncode == 0
+
+        # Enforce file ownership: if declared_files is non-empty, fail on any violation.
+        # Normalize both sides to canonical repo-relative POSIX paths before comparing so that
+        # ./src/a.py and src/a.py are treated as the same file.
+        if task_succeeded and declared_files and task_changed:
+            declared_set = {str(PurePosixPath(f)) for f in declared_files}
+            violations = [f for f in task_changed if str(PurePosixPath(f)) not in declared_set]
+            if violations:
+                err = (
+                    f"Task {idx} ({task_name}): agent modified files outside declared ownership: "
+                    + ", ".join(violations)
+                )
+                logger.log(f"[TASK {idx}] OWNERSHIP VIOLATION: {err}")
+                task_log_content = (
+                    f"# Task {idx} Implementation Log\n\n"
+                    f"## Status\n\nFAILED (ownership violation)\n\n"
+                    f"## Task\n\n{task_name}: {task.get('description', '')}\n\n"
+                    f"## Changed Files\n\n"
+                    + ("".join(f"- {p}\n" for p in task_changed) or "- (none)\n")
+                    + f"\n## Failure\n\n{err}\n"
+                )
+                (artifact_dir / f"implement-log-task-{idx}.md").write_text(task_log_content, encoding="utf-8")
+                logger.finish(1, "failed")
+                summary["failed_task_index"] = idx
+                summary["phases"]["implement"] = phase_record(
+                    "failed", logger, attempt=2 if is_retry else 1,
+                    failed_task_index=idx, changedFiles=all_changed, partialChangedFiles=task_changed,
+                )
+                write_json(artifact_dir / "summary.json", summary)
+                _write_partial_agg_log(artifact_dir, per_task_status, idx, task_name,
+                                       "FAILED (ownership violation)", all_changed,
+                                       partial_changed=task_changed)
+                return fail_json(phase="implement", error=err, artifact_dir=artifact_dir,
+                                 exit_code=1, extra={"failed_task_index": idx})
+
+        # Per-task no-op check: any task that exits 0 but changes no tracked files is a failure.
+        # Exception for the retry start task: if all declared files were already pre-seeded into
+        # all_changed (from partialChangedFiles of the previous attempt), those files are already
+        # on disk from the prior run; the agent correctly found nothing new to do.
+        if task_succeeded and not task_changed:
+            if is_retry and idx == start_index and declared_files:
+                already_written = {str(PurePosixPath(f)) for f in all_changed}
+                declared_norm = {str(PurePosixPath(f)) for f in declared_files}
+                if declared_norm <= already_written:
+                    logger.log(
+                        f"[TASK {idx}] Retry no-op allowed: all declared files already in "
+                        f"pre-seeded all_changed from previous run"
+                    )
+                    per_task_status.append({
+                        "index": idx, "name": task_name,
+                        "status": "success (retry no-op — files already written)",
+                        "changedFiles": list(declared_files),
+                        "log": str(artifact_dir / f"implement-log-task-{idx}.md"),
+                    })
+                    (artifact_dir / f"implement-log-task-{idx}.md").write_text(
+                        f"# Task {idx} Implementation Log\n\n"
+                        f"## Status\n\nSUCCESS (retry no-op — files already written in previous attempt)\n\n"
+                        f"## Task\n\n{task_name}: {task.get('description', '')}\n\n"
+                        f"## Declared Files\n\n"
+                        + "".join(f"- {p}\n" for p in declared_files)
+                        + "\n## Note\n\nAll declared files were pre-seeded from partialChangedFiles. "
+                        "No new edits needed.\n",
+                        encoding="utf-8",
+                    )
+                    continue
+            pi_out_lower = result_proc.stdout.lower()
+            claimed = any(kw in pi_out_lower for kw in ["done", "complete", "created", "success", "✅"])
+            err = (
+                f"Task {idx} ({task_name}): agent exited 0 but no worktree files changed"
+                + (" (agent claimed success)" if claimed else "")
+            )
+            logger.log(f"[TASK {idx}] NO-OP: {err}")
+            task_log_content = (
+                f"# Task {idx} Implementation Log\n\n"
+                f"## Status\n\nFAILED (no-op — no files changed)\n\n"
+                f"## Task\n\n{task_name}: {task.get('description', '')}\n\n"
+                f"## Changed Files\n\n- (none)\n\n"
+                + f"\n## {agent_name} Output\n\n```\n{result_proc.stdout[-5000:]}\n```\n"
+            )
+            (artifact_dir / f"implement-log-task-{idx}.md").write_text(task_log_content, encoding="utf-8")
+            logger.finish(3, "failed")
+            summary["failed_task_index"] = idx
+            summary["phases"]["implement"] = phase_record(
+                "no_changes", logger, attempt=2 if is_retry else 1,
+                failed_task_index=idx, changedFiles=all_changed,
+            )
+            write_json(artifact_dir / "summary.json", summary)
+            _write_partial_agg_log(artifact_dir, per_task_status, idx, task_name,
+                                   "FAILED (no-op)", all_changed)
+            return fail_json(phase="implement", error=err, artifact_dir=artifact_dir,
+                             exit_code=3, extra={"failed_task_index": idx})
+
+        # Write per-task log regardless of outcome
+        task_log_content = f"# Task {idx} Implementation Log\n\n"
+        task_log_content += f"## Status\n\n{'SUCCESS' if task_succeeded else 'FAILED (exit ' + str(result_proc.returncode) + ')'}\n\n"
+        task_log_content += f"## Task\n\n{task_name}: {task.get('description', '')}\n\n"
+        task_log_content += "## Changed Files\n\n"
+        task_log_content += "".join(f"- {p}\n" for p in task_changed) or "- (none)\n"
+        task_log_content += f"\n## {agent_name} Output\n\n```\n{result_proc.stdout[-5000:]}\n```\n"
+        log_path = artifact_dir / f"implement-log-task-{idx}.md"
+        log_path.write_text(task_log_content, encoding="utf-8")
+        logger.log(f"[TASK {idx}] Output:\n{result_proc.stdout}")
+
+        if not task_succeeded:
+            logger.log(f"[TASK {idx}] Non-zero exit: {result_proc.returncode}")
+            if declared_files and task_changed:
+                declared_norm_f = {str(PurePosixPath(f)) for f in declared_files}
+                f_violations = [f for f in task_changed if str(PurePosixPath(f)) not in declared_norm_f]
+                if f_violations:
+                    logger.log(f"[TASK {idx}] OWNERSHIP VIOLATION in partial failure edits: " + ", ".join(f_violations))
+            logger.finish(result_proc.returncode, "failed")
+            summary["failed_task_index"] = idx
+            summary["phases"]["implement"] = phase_record(
+                "failed", logger, attempt=2 if is_retry else 1,
+                failed_task_index=idx,
+                changedFiles=all_changed,       # confirmed successful tasks only
+                partialChangedFiles=task_changed,  # failed task partial edits
+            )
+            write_json(artifact_dir / "summary.json", summary)
+            _write_partial_agg_log(artifact_dir, per_task_status, idx, task_name,
+                                   f"FAILED (exit {result_proc.returncode})", all_changed,
+                                   partial_changed=task_changed)
+            return fail_json(
+                phase="implement",
+                error=f"Task {idx} ({task_name}): agent exited {result_proc.returncode}",
+                artifact_dir=artifact_dir,
+                exit_code=result_proc.returncode,
+                extra={"failed_task_index": idx},
+            )
+
+        per_task_status.append({
+            "index": idx,
+            "name": task_name,
+            "status": "success",
+            "changedFiles": task_changed,
+            "log": str(log_path),
+        })
+        all_changed = sorted(set(all_changed + task_changed))
+        logger.log(f"[TASK {idx}] Changed files: {task_changed or '(none)'}")
+
+    # --- All tasks succeeded: write aggregate log ---
+    agg_log = "# Implementation Log (Sequential)\n\n"
+    agg_log += "## Per-Task Status\n\n"
+    for st in per_task_status:
+        agg_log += f"- Task {st['index']} ({st['name']}): {st['status']} ({len(st['changedFiles'])} files)\n"
+    agg_log += "\n## All Changed Files\n\n"
+    agg_log += "".join(f"- {p}\n" for p in all_changed) or "- (none)\n"
+    agg_log_path = artifact_dir / "implement-log.md"
+    agg_log_path.write_text(agg_log, encoding="utf-8")
+
+    # Mirror the single-call no_changes check: if every task exited 0 but nothing changed, fail.
+    if not all_changed:
+        diagnostic = "No files changed across all sequential tasks despite agent success."
+        logger.log(f"[WARNING] {diagnostic}")
+        logger.finish(3, "failed")
+        summary.pop("failed_task_index", None)
+        summary["phases"]["implement"] = phase_record("no_changes", logger, changedFiles=[])
+        summary.setdefault("files", {})["implementLog"] = str(agg_log_path)
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="implement", error=diagnostic, artifact_dir=artifact_dir, exit_code=3)
+
+    logger.finish(0, "success")
+    summary.pop("failed_task_index", None)
+    summary["phases"]["implement"] = phase_record(
+        "success", logger, attempt=2 if is_retry else 1,
+        changedFiles=all_changed,
+        tasksCompleted=len(per_task_status),
+    )
+    summary.setdefault("files", {})["implementLog"] = str(agg_log_path)
+    write_json(artifact_dir / "summary.json", summary)
+    print(json.dumps({
+        "status": "success", "phase": "implement",
+        "changedFiles": all_changed, "artifactDir": str(artifact_dir),
+    }, ensure_ascii=False, separators=(",", ":")))
+    return 0
+
+
 def phase_implement(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
@@ -1589,6 +2063,28 @@ def phase_implement(root: Path, artifact_dir: Path, args: argparse.Namespace) ->
     design_content = design_path.read_text(encoding="utf-8", errors="replace")
     intent_content = intent_path.read_text(encoding="utf-8", errors="replace") if intent_path.exists() else "(not provided)"
     feedback = args.feedback if is_retry else ""
+
+    # If task-batches.md has a JSON task block, use sequential per-task implementation
+    batches_path = artifact_dir / "task-batches.md"
+    tasks = parse_task_batches(artifact_dir)
+    if not tasks and batches_path.exists():
+        logger.log("[WARNING] task-batches.md found but contains no parseable JSON task block — falling back to single-call implementation")
+    if tasks:
+        return _implement_sequential(
+            tasks=tasks,
+            root=root,
+            artifact_dir=artifact_dir,
+            args=args,
+            summary=summary,
+            worktree=worktree,
+            logger=logger,
+            agent_config=agent_config_pre,
+            design_content=design_content,
+            intent_content=intent_content,
+            feedback=feedback,
+            is_retry=is_retry,
+        )
+
     fenced_task = fence_user_input("task", args.task)
     fenced_feedback = fence_user_input("feedback", feedback) if feedback else ""
     prompt = f"""You are implementing a bounded task in this repository.
