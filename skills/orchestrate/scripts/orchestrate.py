@@ -1474,6 +1474,39 @@ Under Implementation Design, write the exact implementation-facing spec for Pi C
     return 0
 
 
+def _emit_advisory(
+    phase_key: str,
+    phase_name: str,
+    summary: dict,
+    artifact_dir: Path,
+    logger: "PhaseLogger",
+    feedback: str,
+    verdict: str,
+    review: str | None = None,
+    **extra: Any,
+) -> int:
+    """Record an advisory (non-blocking) Codex review result and return 0."""
+    record = phase_record("success", logger, advisory=True, verdict=verdict, **extra)
+    if review is not None:
+        record["review"] = review
+    summary["phases"][phase_key] = record
+    write_json(artifact_dir / "summary.json", summary)
+    print(
+        json.dumps(
+            {
+                "status": "success",
+                "phase": phase_name,
+                "advisory": True,
+                "codexFeedback": feedback,
+                "artifactDir": str(artifact_dir),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    )
+    return 0
+
+
 def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
@@ -1526,14 +1559,11 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
             write_json(artifact_dir / "summary.json", summary)
             return fail_json(phase="verify-design", error=f"Codex timeout ({args.agent_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
         # Advisory mode: record as success with advisory flag and continue
-        summary["phases"]["verify_design"] = phase_record(
-            "success", logger, advisory=True, verdict=f"timeout: review unavailable"
+        return _emit_advisory(
+            "verify_design", "verify-design", summary, artifact_dir, logger,
+            feedback=f"Codex timeout ({args.agent_timeout}s): review unavailable",
+            verdict="timeout",
         )
-        write_json(artifact_dir / "summary.json", summary)
-        print(json.dumps({"status": "success", "phase": "verify-design", "advisory": True,
-                          "codexFeedback": f"Codex timeout ({args.agent_timeout}s): review unavailable",
-                          "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":")))
-        return 0
 
     codex_output = codex_result.stdout
     logger.log(sanitize_output(codex_output))
@@ -1555,14 +1585,12 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
                 extra={"retriable": True, "cause": cause, "codexOutput": sanitize_output(codex_output[-2000:])},
             )
         # Advisory mode: record as success with advisory flag and continue
-        summary["phases"]["verify_design"] = phase_record(
-            "success", logger, advisory=True, verdict=cause, review=str(review_path)
+        return _emit_advisory(
+            "verify_design", "verify-design", summary, artifact_dir, logger,
+            feedback=sanitize_output(codex_output[-2000:]) or f"Codex API error: {cause}",
+            verdict=cause,
+            review=str(review_path),
         )
-        write_json(artifact_dir / "summary.json", summary)
-        print(json.dumps({"status": "success", "phase": "verify-design", "advisory": True,
-                          "codexFeedback": cause, "artifactDir": str(artifact_dir)},
-                         ensure_ascii=False, separators=(",", ":")))
-        return 0
 
     verdict, details = parse_codex_verdict(codex_output)
     if codex_result.returncode != 0 and verdict not in ("approved", "api_error"):
@@ -1581,14 +1609,12 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
                 extra={"codexFeedback": codex_output[-2000:]},
             )
         # Advisory mode: record as success with advisory flag and continue
-        summary["phases"]["verify_design"] = phase_record(
-            "success", logger, advisory=True, verdict=details, review=str(review_path)
+        return _emit_advisory(
+            "verify_design", "verify-design", summary, artifact_dir, logger,
+            feedback=codex_output[-2000:] or f"Codex {verdict}: no output",
+            verdict=verdict if verdict != "unclear" else f"unclear: {details[:200]}",
+            review=str(review_path),
         )
-        write_json(artifact_dir / "summary.json", summary)
-        print(json.dumps({"status": "success", "phase": "verify-design", "advisory": True,
-                          "codexFeedback": codex_output[-2000:], "artifactDir": str(artifact_dir)},
-                         ensure_ascii=False, separators=(",", ":")))
-        return 0
 
     logger.finish(0, "success")
     summary["phases"]["verify_design"] = phase_record("success", logger, review=str(review_path), verdict=details)
@@ -1849,22 +1875,16 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
                 extra={"retriable": True, "cause": cause, "codexOutput": sanitize_output(codex_output[-2000:])},
             )
         # Advisory mode: record as success with advisory flag and continue
-        summary["phases"]["review_test"] = phase_record(
-            "success",
-            logger,
-            advisory=True,
+        return _emit_advisory(
+            "review_test", "review-test", summary, artifact_dir, logger,
+            feedback=cause,
+            verdict=cause,
+            review=str(review_path),
             attempt=2 if is_retry else 1,
             testCommand=test_command,
             testExitCode=test_exit,
             testResults=str(test_results_path),
-            review=str(review_path),
-            cause=cause,
         )
-        write_json(artifact_dir / "summary.json", summary)
-        print(json.dumps({"status": "success", "phase": "review-test", "advisory": True,
-                          "codexFeedback": cause, "artifactDir": str(artifact_dir)},
-                         ensure_ascii=False, separators=(",", ":")))
-        return 0
 
     if test_exit != 0:
         feedback = f"Test failure (exit {test_exit}):\n{test_output[-1000:]}\n\nCodex feedback:\n{cleaned_codex_output[-1500:]}"
@@ -1908,22 +1928,16 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
                 extra={"codexFeedback": codex_output[-2000:]},
             )
         # Advisory mode: record as success with advisory flag and continue
-        summary["phases"]["review_test"] = phase_record(
-            "success",
-            logger,
-            advisory=True,
+        return _emit_advisory(
+            "review_test", "review-test", summary, artifact_dir, logger,
+            feedback=codex_output[-2000:] or f"Codex {verdict}: no output",
+            verdict=verdict if verdict != "unclear" else f"unclear: {details[:200]}",
+            review=str(review_path),
             attempt=2 if is_retry else 1,
             testCommand=test_command,
             testExitCode=test_exit,
             testResults=str(test_results_path),
-            review=str(review_path),
-            verdict=details,
         )
-        write_json(artifact_dir / "summary.json", summary)
-        print(json.dumps({"status": "success", "phase": "review-test", "advisory": True,
-                          "codexFeedback": codex_output[-2000:], "artifactDir": str(artifact_dir)},
-                         ensure_ascii=False, separators=(",", ":")))
-        return 0
 
     logger.finish(0, "success" if not args.dry_run else "dry_run")
     summary["phases"]["review_test"] = phase_record(
