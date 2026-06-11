@@ -2,3 +2,15 @@ __pycache__/
 *.pyc
 *.pyo
 .pytest_cache/
+
+# Local/private agent runtime state
+.omx/
+.worktrees/
+
+# Local-only Claude command/skill variants that may contain private endpoints
+commands/fiftybox-local*.md
+skills/fiftybox-local*/
+
+# Generated local diagrams/previews
+fiftybox-structure.html
+fiftybox-structure.png
