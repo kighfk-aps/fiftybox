@@ -1,6 +1,6 @@
 ---
-name: orchestrate
-description: Multi-agent orchestration harness with TDD. Explores via Pi CLI, clarifies intent, designs architecture, verifies with Codex, Claude writes failing tests, Pi CLI implements in parallel to pass them, Claude reviews, then commits, merges, pushes, and cleans up. Use when user invokes /orchestrate or wants the full agent pipeline.
+name: fiftybox-orchestration
+description: Multi-agent orchestration harness with TDD. Explores via Pi CLI, clarifies intent, designs architecture, verifies with Codex, Claude writes failing tests, Pi CLI implements in parallel to pass them, Claude reviews, then commits, merges, pushes, and cleans up. Use when user invokes /fiftybox-orchestration or wants the full agent pipeline.
 ---
 
 # Orchestrate Harness
@@ -18,7 +18,7 @@ Every phase writes artifacts under `.omx/artifacts/orchestrate/<timestamp>/`; fa
 User runs:
 
 ```bash
-/orchestrate "<task description>"
+/fiftybox-orchestration "<task description>"
 ```
 
 The task description must be passed unchanged to every helper phase.
@@ -49,7 +49,7 @@ Read the JSON output and keep `artifactDir` and `worktree` for later phases. If 
 
 ### Auto-resume (optional)
 
-If the user invoked `/orchestrate --auto-resume "<task>"`, pass `--auto-resume`
+If the user invoked `/fiftybox-orchestration --auto-resume "<task>"`, pass `--auto-resume`
 to the setup command:
 
 ```bash
@@ -473,7 +473,7 @@ Report `summary.json` final status.
 
 ## Resume Mode
 
-When invoked as `/orchestrate --resume <artifactDir>` (typically by the
+When invoked as `/fiftybox-orchestration --resume <artifactDir>` (typically by the
 watcher), recover the in-flight run:
 
 1. Read the next helper phase:
