@@ -14,10 +14,14 @@ fail() { echo "FAIL: $1"; FAIL=$(( FAIL + 1 )); }
 # ---------------------------------------------------------------------------
 INSTALL_ROOT="$(mktemp -d)"
 export HOME="$INSTALL_ROOT"
-SKILLS_DIR="$INSTALL_ROOT/.claude/skills/orchestrate"
+SKILLS_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-orchestration"
 PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
+LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
+CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
+CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
+CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-euecute"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
 # Run install.sh
@@ -79,6 +83,10 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "Claude fiftybox-local skill installed" \
     || fail "Claude fiftybox-local skill not installed"
 
+[[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+    && pass "Claude fiftybox-local-execute skill installed" \
+    || fail "Claude fiftybox-local-execute skill not installed"
+
 [[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
     && pass "fiftybox-local select_remote_model.sh installed executable" \
     || fail "fiftybox-local select_remote_model.sh missing or not executable"
@@ -86,6 +94,42 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -x "$LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
     && pass "fiftybox-local stop_remote_model.sh installed executable" \
     || fail "fiftybox-local stop_remote_model.sh missing or not executable"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
+    && pass "Codex fiftybox-local skill installed" \
+    || fail "Codex fiftybox-local skill not installed"
+
+[[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
+    && pass "Codex fiftybox-local select_remote_model.sh installed executable" \
+    || fail "Codex fiftybox-local select_remote_model.sh missing or not executable"
+
+[[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
+    && pass "Codex fiftybox-local stop_remote_model.sh installed executable" \
+    || fail "Codex fiftybox-local stop_remote_model.sh missing or not executable"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
+    && pass "Codex fiftybox-local OpenAI metadata installed" \
+    || fail "Codex fiftybox-local OpenAI metadata not installed"
+
+[[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+    && pass "Codex fiftybox-local-execute skill installed" \
+    || fail "Codex fiftybox-local-execute skill not installed"
+
+[[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents/openai.yaml" ]] \
+    && pass "Codex fiftybox-local-execute OpenAI metadata installed" \
+    || fail "Codex fiftybox-local-execute OpenAI metadata not installed"
+
+[[ -f "$CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR/SKILL.md" ]] \
+    && pass "Codex fiftybox-local-euecute typo alias installed" \
+    || fail "Codex fiftybox-local-euecute typo alias not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
+    && pass "fiftybox-local-execute.md command installed" \
+    || fail "fiftybox-local-execute.md command not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-local-euecute.md" ]] \
+    && pass "fiftybox-local-euecute.md typo command installed" \
+    || fail "fiftybox-local-euecute.md typo command not installed"
 
 # ---------------------------------------------------------------------------
 # configure.sh: sets agents

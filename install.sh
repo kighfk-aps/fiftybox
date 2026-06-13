@@ -7,6 +7,9 @@ LOCAL_SKILL_DIR="$HOME/.claude/skills/fiftybox-local"
 EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-execute"
 LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
+CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
+CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
+CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-euecute"
 COMMANDS_DIR="$HOME/.claude/commands"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -57,7 +60,27 @@ log "Installed Claude skill fiftybox-execute → $EXECUTE_SKILL_DIR"
 # Install fiftybox-local-execute skill
 mkdir -p "$LOCAL_EXECUTE_SKILL_DIR"
 cp "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md"
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local-execute/agents" ]]; then
+  mkdir -p "$LOCAL_EXECUTE_SKILL_DIR/agents"
+  cp "$SCRIPT_DIR/skills/fiftybox-local-execute/agents/"* "$LOCAL_EXECUTE_SKILL_DIR/agents/"
+fi
 log "Installed Claude skill fiftybox-local-execute → $LOCAL_EXECUTE_SKILL_DIR"
+
+# Install fiftybox-local-execute skill for Codex
+mkdir -p "$CODEX_LOCAL_EXECUTE_SKILL_DIR"
+cp "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" "$CODEX_LOCAL_EXECUTE_SKILL_DIR/SKILL.md"
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local-execute/agents" ]]; then
+  mkdir -p "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents"
+  cp "$SCRIPT_DIR/skills/fiftybox-local-execute/agents/"* "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents/"
+fi
+log "Installed Codex skill fiftybox-local-execute → $CODEX_LOCAL_EXECUTE_SKILL_DIR"
+
+# Install typo compatibility alias requested as fiftybox-local-euecute
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local-euecute" ]]; then
+  mkdir -p "$CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR"
+  cp "$SCRIPT_DIR/skills/fiftybox-local-euecute/SKILL.md" "$CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR/SKILL.md"
+  log "Installed Codex typo alias fiftybox-local-euecute → $CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR"
+fi
 
 # Install planning skill for Claude slash commands and Codex-global use
 mkdir -p "$PLANS_SKILL_DIR"
@@ -75,7 +98,25 @@ if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/scripts" ]]; then
   cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/"*.sh "$LOCAL_SKILL_DIR/scripts/"
   chmod +x "$LOCAL_SKILL_DIR/scripts/"*.sh
 fi
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/agents" ]]; then
+  mkdir -p "$LOCAL_SKILL_DIR/agents"
+  cp "$SCRIPT_DIR/skills/fiftybox-local/agents/"* "$LOCAL_SKILL_DIR/agents/"
+fi
 log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
+
+# Install local-model orchestration variant for Codex
+mkdir -p "$CODEX_LOCAL_SKILL_DIR"
+cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$CODEX_LOCAL_SKILL_DIR/SKILL.md"
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/scripts" ]]; then
+  mkdir -p "$CODEX_LOCAL_SKILL_DIR/scripts"
+  cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/"*.sh "$CODEX_LOCAL_SKILL_DIR/scripts/"
+  chmod +x "$CODEX_LOCAL_SKILL_DIR/scripts/"*.sh
+fi
+if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/agents" ]]; then
+  mkdir -p "$CODEX_LOCAL_SKILL_DIR/agents"
+  cp "$SCRIPT_DIR/skills/fiftybox-local/agents/"* "$CODEX_LOCAL_SKILL_DIR/agents/"
+fi
+log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
 
 # Install slash command
 mkdir -p "$COMMANDS_DIR"
@@ -85,6 +126,12 @@ cp "$SCRIPT_DIR/commands/fiftybox-plans.md" "$COMMANDS_DIR/fiftybox-plans.md"
 log "Installed commands/fiftybox-plans.md → $COMMANDS_DIR/fiftybox-plans.md"
 cp "$SCRIPT_DIR/commands/fiftybox-local.md" "$COMMANDS_DIR/fiftybox-local.md"
 log "Installed commands/fiftybox-local.md → $COMMANDS_DIR/fiftybox-local.md"
+cp "$SCRIPT_DIR/commands/fiftybox-local-execute.md" "$COMMANDS_DIR/fiftybox-local-execute.md"
+log "Installed commands/fiftybox-local-execute.md → $COMMANDS_DIR/fiftybox-local-execute.md"
+if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-euecute.md" ]]; then
+  cp "$SCRIPT_DIR/commands/fiftybox-local-euecute.md" "$COMMANDS_DIR/fiftybox-local-euecute.md"
+  log "Installed typo alias commands/fiftybox-local-euecute.md → $COMMANDS_DIR/fiftybox-local-euecute.md"
+fi
 
 echo ""
 log "To configure agents: $SKILLS_DIR/configure.sh"
