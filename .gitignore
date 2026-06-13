@@ -9,10 +9,7 @@ __pycache__/
 
 # Local-only Claude command/skill variants that may contain private endpoints
 commands/fiftybox-local*.md
-skills/fiftybox-local*/.env
-skills/fiftybox-local*/.env.*
-skills/fiftybox-local*/config.local.json
-skills/fiftybox-local*/.claude/
+skills/fiftybox-local*/
 skills/fiftybox-local*.md
 
 # Generated local diagrams/previews
