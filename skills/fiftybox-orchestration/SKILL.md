@@ -41,7 +41,7 @@ If interop tools are not visible at all — `OMC_INTEROP_TOOLS_ENABLED=1` is not
 Run:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase setup --task "<task>" --cwd "$(pwd)"
 ```
 
@@ -53,7 +53,7 @@ If the user invoked `/fiftybox-orchestration --auto-resume "<task>"`, pass `--au
 to the setup command:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase setup --task "<task>" --cwd "$(pwd)" --auto-resume
 ```
 
@@ -75,7 +75,7 @@ heartbeat plus a usage-limited probe is what triggers a relaunch.
 Run:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase explore --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -210,7 +210,7 @@ After the agent completes, write `<artifactDir>/logs/phase-3-design.log`.
 Run:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase verify-design --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -335,7 +335,7 @@ For each task in current batch:
 Each agent runs its own Pi CLI instance:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<specific task description>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --model deepseek-v4-pro
 ```
@@ -355,7 +355,7 @@ python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
 When parallelism is not applicable (single task or tightly coupled):
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --model deepseek-v4-pro
 ```
@@ -413,7 +413,7 @@ Since parallel tasks ran independently:
 Run after all batches pass the Claude Review Gate:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -423,12 +423,12 @@ The helper runs the detected or provided test command, writes `test-results.md`,
 **If tests fail** (non-zero exit code): automatically retry the failing task's Phase 5 once with the test failure output as feedback:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --model deepseek-v4-pro \
   --is-retry --feedback "<test failure output>"
 
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --is-retry
 ```
@@ -452,7 +452,7 @@ On second failure, stop and report choices:
 Run only after Phase 6 status is `success`:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase complete --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -464,7 +464,7 @@ The helper commits in the task worktree with a Lore-style message, creates a det
 Run:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase cleanup --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -479,7 +479,7 @@ watcher), recover the in-flight run:
 1. Read the next helper phase:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase resume --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```

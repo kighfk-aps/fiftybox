@@ -15,6 +15,9 @@ fail() { echo "FAIL: $1"; FAIL=$(( FAIL + 1 )); }
 INSTALL_ROOT="$(mktemp -d)"
 export HOME="$INSTALL_ROOT"
 SKILLS_DIR="$INSTALL_ROOT/.claude/skills/orchestrate"
+PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
+LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
+CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
 # Run install.sh
@@ -56,9 +59,33 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "configure.sh is executable" \
     || fail "configure.sh not executable"
 
-[[ -f "$COMMANDS_DIR/orchestrate.md" ]] \
-    && pass "orchestrate.md installed" \
-    || fail "orchestrate.md not installed"
+[[ -f "$COMMANDS_DIR/fiftybox-orchestration.md" ]] \
+    && pass "fiftybox-orchestration.md installed" \
+    || fail "fiftybox-orchestration.md not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-plans.md" ]] \
+    && pass "fiftybox-plans.md command installed" \
+    || fail "fiftybox-plans.md command not installed"
+
+[[ -f "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md" ]] \
+    && pass "Codex fiftybox-plans skill installed" \
+    || fail "Codex fiftybox-plans skill not installed"
+
+[[ -f "$PLANS_SKILL_DIR/SKILL.md" ]] \
+    && pass "Claude fiftybox-plans skill installed" \
+    || fail "Claude fiftybox-plans skill not installed"
+
+[[ -f "$LOCAL_SKILL_DIR/SKILL.md" ]] \
+    && pass "Claude fiftybox-local skill installed" \
+    || fail "Claude fiftybox-local skill not installed"
+
+[[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
+    && pass "fiftybox-local select_remote_model.sh installed executable" \
+    || fail "fiftybox-local select_remote_model.sh missing or not executable"
+
+[[ -x "$LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
+    && pass "fiftybox-local stop_remote_model.sh installed executable" \
+    || fail "fiftybox-local stop_remote_model.sh missing or not executable"
 
 # ---------------------------------------------------------------------------
 # configure.sh: sets agents

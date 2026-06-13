@@ -59,7 +59,7 @@ If the user also has an intent summary or scope document, write it to `<artifact
 ### Step 2: Setup (Phase 0)
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase setup --task "<task>" --cwd "$(pwd)"
 ```
 
@@ -164,7 +164,7 @@ For each task in current batch:
 Each agent runs its own Pi CLI instance:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<specific task description>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --provider cursor --model composer-2.5 --skip-verify
 ```
@@ -223,7 +223,7 @@ Since parallel tasks ran independently:
 After all batches pass the Claude Review Gate:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -231,12 +231,12 @@ python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
 On first failure, **automatically retry** the failing task's Phase 5 once with Codex feedback:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --provider cursor --model composer-2.5 --skip-verify \
   --is-retry --feedback "<codex feedback>"
 
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --is-retry
 ```
@@ -251,7 +251,7 @@ On second failure, report and present choices:
 Run only after Phase 7 succeeds:
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase complete --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -259,7 +259,7 @@ python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
 ### Step 9: Deploy (Phase 7b)
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --provider cursor --model composer-2.5
 ```
@@ -271,7 +271,7 @@ Skipped automatically if no deployment config is detected.
 ### Step 10: Cleanup (Phase 8)
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase cleanup --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>"
 ```
@@ -373,7 +373,7 @@ If the user says `/fiftybox-execute deploy` or asks to "just deploy":
 4. No worktree or artifact setup needed for deploy-only
 
 ```bash
-python3 ~/.claude/skills/orchestrate/scripts/orchestrate.py \
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" --provider cursor --model composer-2.5
 ```

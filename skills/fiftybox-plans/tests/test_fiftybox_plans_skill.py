@@ -21,39 +21,39 @@ def test_frontmatter_description_present():
 
 def test_all_phases_present():
     content = SKILL_PATH.read_text()
-    for phase in ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5", "Phase 6", "Phase 7", "Phase 8"]:
+    for phase in ["Phase 1", "Phase 2", "Phase 3", "Phase 4", "Phase 5", "Phase 6"]:
         assert phase in content, f"{phase} section missing from SKILL.md"
 
 
 def test_explore_uses_ollama():
     content = SKILL_PATH.read_text()
-    assert "--provider ollama" in content
+    assert "--explore-model" in content
 
 
-def test_explore_uses_gemma4():
+def test_explore_uses_fast_model():
     content = SKILL_PATH.read_text()
-    assert "gemma4" in content
+    assert "deepseek-v4-flash" in content
 
 
-def test_codex_uses_gpt55_high():
+def test_codex_reviews_plan():
     content = SKILL_PATH.read_text()
-    assert "gpt-5.5-high" in content
+    assert "codex-plan-review.md" in content
 
 
 def test_resume_artifacts_present():
     content = SKILL_PATH.read_text()
-    for artifact in ["intent-summary.md", "design.md", "route-decision.md", "codex-design-review.md"]:
+    for artifact in ["intent-summary.md", "design.md", "route-decision.md", "codex-plan-review.md"]:
         assert artifact in content, f"Resume artifact '{artifact}' not mentioned in SKILL.md"
 
 
 def test_handoff_to_orchestrate_resume():
     content = SKILL_PATH.read_text()
-    assert "--resume" in content
+    assert "/fiftybox-orchestration --resume" in content
 
 
 def test_opus_sub_agent_for_design():
     content = SKILL_PATH.read_text()
-    assert "opus" in content.lower()
+    assert "claude-opus-4-6" in content
 
 
 def test_failure_report_format_present():
@@ -63,4 +63,9 @@ def test_failure_report_format_present():
 
 def test_user_gate_with_approval_options():
     content = SKILL_PATH.read_text()
-    assert "승인" in content or "approval" in content.lower()
+    assert "Do not start implementation" in content
+
+
+def test_saves_to_plans_folder():
+    content = SKILL_PATH.read_text()
+    assert "plans/YYYY-MM-DD-<task-slug>.md" in content
