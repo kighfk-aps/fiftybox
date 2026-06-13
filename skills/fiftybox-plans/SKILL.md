@@ -36,16 +36,65 @@ Read the JSON output and keep `artifactDir` and `worktree`.
 
 ## Phase 2: Explore
 
-Run:
+Qwen3.5 9B 262K(Ollama) 고정 사용. 탐색 시작 직전에 환경변수를 Ollama endpoint로 설정한다:
 
 ```bash
-python3 <orchestrate.py> --phase explore --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --explore-model deepseek-v4-flash
+eval "$("$HOME/.claude/skills/fiftybox-local/scripts/select_remote_model.sh" 9b)"
+export QWEN_SUMMARY_MAX_CHARS_PER_FILE="12000"
+export QWEN_SUMMARY_FILE_BATCH_MAX_TOKENS="8192"
+export QWEN_SUMMARY_SINGLE_FILE_MAX_TOKENS="1024"
+export QWEN_SUMMARY_MODULE_MAX_TOKENS="2048"
+export QWEN_SUMMARY_FINAL_MAX_TOKENS="4096"
+export QWEN_SUMMARY_TIMEOUT="900"
 ```
 
-Read `<artifactDir>/explore-report.md`.
+`qwen-summary-index`를 9B의 context tier인 `256k`로 실행한다:
 
-If exploration fails, retry once with `--explore-timeout 300`. If it still fails, write a short failure report with the exact error and preserve `artifactDir`.
+```bash
+python3 /Users/tanpapa/Desktop/develop-a/local-model/bin/qwen-summary-index "$(pwd)" \
+  --context-tier 256k \
+  --model "$LOCAL_MODEL_NAME" \
+  --runs-dir "<artifactDir>/qwen-explore"
+```
+
+완료 후 가장 최신 출력 디렉토리의 `final-summary.md`를 `<artifactDir>/explore-report.md`에 복사한다:
+
+```bash
+latest="$(ls -td "<artifactDir>/qwen-explore"/run-* 2>/dev/null | head -1)"
+cp "$latest/final-summary.md" "<artifactDir>/explore-report.md"
+```
+
+복사 완료 즉시 환경변수를 정리한다. Ollama는 공유 서비스이므로 컨테이너를 내리지 않는다:
+
+```bash
+"$HOME/.claude/skills/fiftybox-local/scripts/stop_remote_model.sh" 9b
+unset QWEN_SUMMARY_BASE_URL QWEN_SUMMARY_MODEL QWEN_SUMMARY_API_KEY
+unset QWEN_SUMMARY_MAX_CHARS_PER_FILE QWEN_SUMMARY_FILE_BATCH_MAX_TOKENS
+unset QWEN_SUMMARY_SINGLE_FILE_MAX_TOKENS QWEN_SUMMARY_MODULE_MAX_TOKENS
+unset QWEN_SUMMARY_FINAL_MAX_TOKENS
+```
+
+**탐색 실패·타임아웃 시 절대 금지 사항:**
+- Claude가 직접 코드베이스를 읽거나 탐색하는 fallback을 수행해서는 안 된다.
+- 느리다고 판단해 중도 포기하거나 대안 탐색으로 전환해서도 안 된다.
+- 오직 두 가지 행동만 허용된다: **재시도(1회)** 또는 **실패 보고 후 중단**.
+
+실패 시 처리 순서:
+1. `qwen-summary-index`가 비정상 종료하거나 `final-summary.md`가 생성되지 않으면 한 번 재시도한다.
+2. 재시도도 실패하면 `stop_remote_model.sh 9b`를 실행하고, 환경변수를 정리한 뒤, 아래 형식으로 실패 보고를 작성하고 즉시 중단한다.
+
+```
+**Phase 2 (EXPLORE) 실패**
+
+**오류:** <qwen-summary-index 종료 코드 및 마지막 출력>
+**원인:** <타임아웃 / 연결 실패 / 기타>
+**보존된 artifactDir:** <artifactDir>
+
+**추천 행동:**
+1. 9B 모델 상태 확인 후 재실행
+2. 원격 GPU 재부팅 후 재실행
+3. 작업 중단
+```
 
 ## Phase 3: Clarify And Route
 

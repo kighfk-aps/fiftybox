@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-CONFIG="$HOME/.claude/skills/orchestrate/config.json"
+CONFIG="$HOME/.claude/skills/fiftybox-orchestration/config.json"
 BUILTIN_AGENTS="pi opencode aider gemini qwen cursor"
 
 current_explore=$(CONFIG="$CONFIG" python3 -c "
