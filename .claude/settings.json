@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": ".claude/hooks/finish-the-work.sh",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
