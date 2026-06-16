@@ -1,88 +1,59 @@
 #!/usr/bin/env bash
-# Smoke test: verifies qwen35-9b vLLM speculative decoding wiring.
-# Local checks: file content. Remote checks: live endpoint.
+# Smoke test: verifies 9b explore phase token budget fix is applied.
+# Checks that SKILL.md uses increased token budgets (빈응답 방지).
 set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 SELECT_SCRIPT="$REPO_DIR/skills/fiftybox-local/scripts/select_remote_model.sh"
 STOP_SCRIPT="$REPO_DIR/skills/fiftybox-local/scripts/stop_remote_model.sh"
 SKILL_MD="$REPO_DIR/skills/fiftybox-local/SKILL.md"
-REMOTE="<퇴역-GPU서버>"
 PASS=0
 FAIL=0
 
 ok()   { echo "  PASS: $*"; PASS=$((PASS+1)); }
 fail() { echo "  FAIL: $*"; FAIL=$((FAIL+1)); }
 
-echo "=== select_remote_model.sh: 9b routes to port 8001 ==="
+echo "=== select_remote_model.sh: 9b routes to Ollama (11434) ==="
 
-if grep -q '9spec-start' "$SELECT_SCRIPT"; then
-  ok "select_remote_model.sh 9b case calls 9spec-start"
+if grep -q '9start' "$SELECT_SCRIPT" && ! grep -q '9spec-start' "$SELECT_SCRIPT"; then
+  ok "select_remote_model.sh 9b case calls 9start (Ollama)"
 else
-  fail "select_remote_model.sh does not call 9spec-start"
+  fail "select_remote_model.sh 9b case does not call 9start"
 fi
 
-if grep -q '8001' "$SELECT_SCRIPT"; then
-  ok "select_remote_model.sh references port 8001"
+if grep -q '11434' "$SELECT_SCRIPT"; then
+  ok "select_remote_model.sh references port 11434"
 else
-  fail "select_remote_model.sh does not reference port 8001 (still using 11434?)"
-fi
-
-if ! grep -q '11434' "$SELECT_SCRIPT"; then
-  ok "select_remote_model.sh no longer references port 11434"
-else
-  fail "select_remote_model.sh still references port 11434 in 9b case"
+  fail "select_remote_model.sh does not reference port 11434"
 fi
 
 echo ""
-echo "=== stop_remote_model.sh: 9b calls 9spec-stop ==="
+echo "=== stop_remote_model.sh: 9b calls 9stop ==="
 
-if grep -q '9spec-stop' "$STOP_SCRIPT"; then
-  ok "stop_remote_model.sh 9b case calls 9spec-stop"
+if grep -q '9stop' "$STOP_SCRIPT" && ! grep -q '9spec-stop' "$STOP_SCRIPT"; then
+  ok "stop_remote_model.sh 9b case calls 9stop (Ollama)"
 else
-  fail "stop_remote_model.sh does not call 9spec-stop"
+  fail "stop_remote_model.sh does not call 9stop"
 fi
 
 echo ""
-echo "=== SKILL.md: port 8001 reference ==="
+echo "=== SKILL.md: increased token budgets ==="
 
-if grep -q '8001' "$SKILL_MD"; then
-  ok "SKILL.md references port 8001"
-else
-  fail "SKILL.md does not reference port 8001"
-fi
+check_budget() {
+  local key="$1" expected="$2"
+  if grep -q "${key}=\"${expected}\"" "$SKILL_MD"; then
+    ok "SKILL.md ${key}=${expected}"
+  else
+    actual=$(grep "$key" "$SKILL_MD" | grep -o '"[0-9]*"' | tr -d '"' || echo "not found")
+    fail "SKILL.md ${key} expected=${expected} got=${actual}"
+  fi
+}
 
-if grep -q 'vllm-qwen35-9b-spec' "$SKILL_MD"; then
-  ok "SKILL.md references container name vllm-qwen35-9b-spec"
-else
-  fail "SKILL.md does not reference vllm-qwen35-9b-spec"
-fi
-
-echo ""
-echo "=== Remote: GGUF file present ==="
-if ssh "$REMOTE" "test -f /home/tanpapa/models/qwen35-9b-q4km.gguf && echo ok" 2>/dev/null \
-   | grep -q ok; then
-  ok "GGUF exists at /home/tanpapa/models/qwen35-9b-q4km.gguf"
-else
-  fail "GGUF not found — run Task 2 (docker cp from Ollama volume)"
-fi
-
-echo ""
-echo "=== Remote: vllm-qwen35-9b-spec endpoint (requires container running) ==="
-if ssh "$REMOTE" "curl -fsS --max-time 8 http://127.0.0.1:8001/v1/models" 2>/dev/null \
-   | grep -q '"id":"current"'; then
-  ok "vllm-qwen35-9b-spec responds at :8001 with id=current"
-else
-  fail "vllm-qwen35-9b-spec not reachable at :8001 — run Tasks 3-5 then start the container"
-fi
-
-echo ""
-echo "=== Remote: 9spec-start alias defined ==="
-if ssh "$REMOTE" "zsh -i -c 'type 9spec-start'" 2>/dev/null | grep -q 'alias\|9spec-start'; then
-  ok "9spec-start alias defined on remote server"
-else
-  fail "9spec-start alias not found — run Task 5 (add aliases to ~/.zshrc)"
-fi
+check_budget "QWEN_SUMMARY_FILE_BATCH_MAX_TOKENS" "3600"
+check_budget "QWEN_SUMMARY_SINGLE_FILE_MAX_TOKENS" "1024"
+check_budget "QWEN_SUMMARY_MODULE_MAX_TOKENS" "1500"
+check_budget "QWEN_SUMMARY_FINAL_MAX_TOKENS" "2400"
+check_budget "QWEN_SUMMARY_MAX_CHARS_PER_FILE" "1000"
 
 echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
