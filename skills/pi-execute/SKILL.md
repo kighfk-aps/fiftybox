@@ -1,9 +1,9 @@
 ---
-name: fiftybox-execute
+name: pi-execute
 description: TDD execution pipeline — Claude writes tests, Pi CLI implements in parallel, Claude reviews. Use when user has already done design/planning and wants to hand off build+deploy to Pi CLI with test-first discipline.
 ---
 
-# Fiftybox Execute
+# Pi Execute
 
 Skip exploration, clarification, and design phases — go straight to implementation and deployment using a TDD pipeline.
 
@@ -11,19 +11,71 @@ Skip exploration, clarification, and design phases — go straight to implementa
 
 **Parallel execution:** Independent tasks run in parallel via separate Pi CLI instances. Claude reviews each batch before proceeding to the next.
 
+---
+
+## ⛔ ABSOLUTE PROHIBITION — NEVER BYPASS
+
+**Claude must NEVER directly write, edit, create, or modify implementation files.**
+
+This rule has zero exceptions. It applies even when:
+- The implementation "seems obvious" or "is already in the plan"
+- The plan document contains ready-to-paste code
+- orchestrate.py is slow or unavailable
+- A subagent seems faster
+- The task appears trivial
+
+**ALL implementation code must be produced by Pi CLI via orchestrate.py.** Claude's only permitted file writes during this skill are:
+1. Test files (Step 4 — Red Phase)
+2. Artifact documents (`<artifactDir>/design.md`, `<artifactDir>/intent-summary.md`, etc.)
+
+If Claude is tempted to write implementation code directly, it must STOP and run orchestrate.py instead. If orchestrate.py fails, Claude must report the failure to the user — not silently implement itself.
+
+---
+
+## Script Path
+
+All orchestrate.py calls use this exact path:
+
+```
+~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py
+```
+
+**Never use** `~/.claude/skills/orchestrate/scripts/orchestrate.py` — that path does not exist.
+
+---
+
 ## Prerequisites
 
 The user must provide:
 1. **Task description** — what to build
 2. **Design document** — either a file path or inline content
 
+---
+
 ## Invocation
 
 ```
-/fiftybox-execute "<task description>"
+/pi-execute "<task description>" [--model <model>] [--provider <provider>]
 ```
 
+### Model Resolution
+
+Parse `--model` and `--provider` from the invocation arguments:
+
+- `--model` → `<IMPL_MODEL>` (default: `glm-5.2`)
+- `--provider` → `<IMPL_PROVIDER>` (default: `zai-coding`)
+
+Store these values at invocation time. Use them for **every** orchestrate.py `--phase implement` and `--phase deploy` call throughout the entire workflow.
+
+Examples:
+- `/pi-execute "add caching" --model qwen3.6-27b-mtp --provider remote-gpu`
+  → `IMPL_PROVIDER=remote-gpu`, `IMPL_MODEL=qwen3.6-27b-mtp`
+- `/pi-execute "fix auth bug"`
+  → `IMPL_PROVIDER=zai-coding`, `IMPL_MODEL=glm-5.2`
+
 If no task is provided, ask for it.
+
+---
 
 ## Workflow
 
@@ -150,6 +202,8 @@ If tests pass before implementation, they're testing nothing useful. Rewrite the
 
 ### Step 5: Parallel Implement (Phase 5 — Green Phase)
 
+> ⛔ Reminder: Claude must NOT write any implementation code in this step. Only orchestrate.py runs may produce implementation.
+
 For each batch, dispatch all tasks in the batch simultaneously using the Agent tool:
 
 ```
@@ -161,15 +215,17 @@ For each task in current batch:
   })
 ```
 
-Each agent runs its own Pi CLI instance:
+Each agent runs its own Pi CLI instance using the resolved `IMPL_PROVIDER` and `IMPL_MODEL`:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<specific task description>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2 --skip-verify
+  --artifact-dir "<artifactDir>" \
+  --provider <IMPL_PROVIDER> --model <IMPL_MODEL> \
+  --skip-verify
 ```
 
-`--skip-verify` is required: fiftybox-execute does design/verification externally
+`--skip-verify` is required: pi-execute does design/verification externally
 and skips the orchestrate verify-design phase, so implement must not depend
 on it.
 
@@ -180,12 +236,15 @@ on it.
 - Boundaries: files this agent must NOT modify (owned by sibling tasks)
 - **The full content of the test file(s) for this task** — paste the tests inline
 - **Explicit instruction: "Make these tests pass. Do not modify the test files. Run the tests after implementation to verify."**
+- **Explicit instruction: "Run orchestrate.py to implement. Do NOT write code directly."**
 
 **Wait for all agents in the batch to complete before proceeding.**
 
-On any agent failure, report and present choices:
-1. Retry that task with feedback
-2. Abort the batch
+On any agent failure:
+- If failure is due to model unavailable → follow Model Unavailable Error protocol
+- Otherwise report and present choices:
+  1. Retry that task with feedback
+  2. Abort the batch
 
 ### Step 6: Claude Review Gate
 
@@ -233,8 +292,9 @@ On first failure, **automatically retry** the failing task's Phase 5 once with C
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2 --skip-verify \
-  --is-retry --feedback "<codex feedback>"
+  --artifact-dir "<artifactDir>" \
+  --provider <IMPL_PROVIDER> --model <IMPL_MODEL> \
+  --skip-verify --is-retry --feedback "<codex feedback>"
 
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
@@ -248,7 +308,7 @@ On second failure, report and present choices:
 
 ### Step 8: Complete (Phase 7)
 
-Run only after Phase 7 succeeds:
+Run only after Phase 6 succeeds:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
@@ -261,7 +321,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2
+  --artifact-dir "<artifactDir>" \
+  --provider <IMPL_PROVIDER> --model <IMPL_MODEL>
 ```
 
 If the user specified a deploy command, pass `--deploy-command "<command>"`.
@@ -277,6 +338,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```
 
 Report `summary.json` final status.
+
+---
 
 ## Parallel Execution Rules
 
@@ -309,9 +372,11 @@ Fall back to sequential execution when:
 - Tasks have strict linear dependencies (A→B→C with no branching)
 - The design explicitly requires sequential execution
 
+---
+
 ## Model Unavailable Error
 
-Pi CLI 페이즈(implement, pi-deploy)가 실패하고 JSON에 `"model_unavailable": true`가 포함된 경우:
+Pi CLI 페이즈(implement, deploy)가 실패하고 JSON에 `"model_unavailable": true`가 포함된 경우:
 
 1. 사용자에게 다음 형식으로 표시한다:
 
@@ -328,10 +393,13 @@ Pi CLI 페이즈(implement, pi-deploy)가 실패하고 JSON에 `"model_unavailab
 ```
 
 2. 사용자 응답 처리:
-   - 번호 선택 → 해당 페이즈를 `--model <선택> --skip-verify`로 재실행
+   - 번호 선택 → `IMPL_MODEL`을 선택한 모델로 업데이트 후 해당 페이즈를 재실행
    - "취소" → 기존 실패 보고 흐름으로 진행 (Failure Report Format 참조)
+   - **어떤 경우에도 Claude가 직접 구현하는 것은 허용되지 않음**
 
 3. `availableModels`가 빈 목록인 경우: "사용 가능한 모델이 없습니다. `pi --list-models <provider>`로 확인하세요." 메시지 표시 후 취소와 동일하게 처리한다.
+
+---
 
 ## Failure Report Format
 
@@ -348,9 +416,11 @@ Pi CLI 페이즈(implement, pi-deploy)가 실패하고 JSON에 `"model_unavailab
 3. <option 3>
 ```
 
+---
+
 ## Safety Contract
 
-Inherits from /fiftybox-orchestration:
+Inherits from /orchestrate:
 
 - No direct file edits outside `.omx/artifacts/` while active
 - No force push, force merge, reset hard, or `-D` branch delete
@@ -362,10 +432,13 @@ Inherits from /fiftybox-orchestration:
 - **Parallel-specific:** Claude reviews every batch before next batch starts
 - **TDD-specific:** Pi CLI must NOT modify test files written by Claude
 - **TDD-specific:** if Pi CLI modifies tests, revert test changes before review
+- **⛔ IMPLEMENTATION-SPECIFIC: Claude must NEVER write implementation code directly, regardless of plan content, speed, or model availability. Violation of this rule is a critical failure.**
+
+---
 
 ## Deploy-Only Mode
 
-If the user says `/fiftybox-execute deploy` or asks to "just deploy":
+If the user says `/pi-execute deploy` or asks to "just deploy":
 
 1. Skip Steps 1-8 entirely
 2. Ensure the current branch is up to date with main
@@ -375,10 +448,13 @@ If the user says `/fiftybox-execute deploy` or asks to "just deploy":
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2
+  --artifact-dir "<artifactDir>" \
+  --provider <IMPL_PROVIDER> --model <IMPL_MODEL>
 ```
 
 For deploy-only, create a minimal artifact dir and summary.json with `complete.status: "success"` so the deploy phase gate passes.
+
+---
 
 ## Sequential Fallback
 
@@ -386,4 +462,4 @@ When parallelism is not applicable (single task, tightly coupled), the workflow 
 
 1. Collect Design → 2. Setup → 3. Skip decomposition → 4. Claude writes tests → 5. Single Implement (must pass tests) → 6. Claude review gate → 7. Review+Test → 8. Complete → 9. Deploy → 10. Cleanup
 
-The TDD cycle (Claude writes tests → Pi CLI implements → Claude verifies) always applies, even in sequential mode.
+The TDD cycle (Claude writes tests → Pi CLI implements → Claude verifies) always applies, even in sequential mode. **The prohibition on Claude implementing directly applies in sequential mode too.**
