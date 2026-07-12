@@ -10,6 +10,7 @@ CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
 CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-euecute"
+CODEX_PI_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/pi-execute"
 COMMANDS_DIR="$HOME/.claude/commands"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -56,6 +57,15 @@ log "Installed configure.sh → $SKILLS_DIR/configure.sh"
 mkdir -p "$EXECUTE_SKILL_DIR"
 cp "$SCRIPT_DIR/skills/fiftybox-execute/SKILL.md" "$EXECUTE_SKILL_DIR/SKILL.md"
 log "Installed Claude skill fiftybox-execute → $EXECUTE_SKILL_DIR"
+
+# Install pi-execute skill for Codex
+mkdir -p "$CODEX_PI_EXECUTE_SKILL_DIR"
+cp "$SCRIPT_DIR/skills/pi-execute/SKILL.md" "$CODEX_PI_EXECUTE_SKILL_DIR/SKILL.md"
+if [[ -d "$SCRIPT_DIR/skills/pi-execute/agents" ]]; then
+  mkdir -p "$CODEX_PI_EXECUTE_SKILL_DIR/agents"
+  cp "$SCRIPT_DIR/skills/pi-execute/agents/"* "$CODEX_PI_EXECUTE_SKILL_DIR/agents/"
+fi
+log "Installed Codex skill pi-execute → $CODEX_PI_EXECUTE_SKILL_DIR"
 
 # Install fiftybox-local-execute skill
 mkdir -p "$LOCAL_EXECUTE_SKILL_DIR"
@@ -124,6 +134,8 @@ cp "$SCRIPT_DIR/commands/fiftybox-orchestration.md" "$COMMANDS_DIR/fiftybox-orch
 log "Installed commands/fiftybox-orchestration.md → $COMMANDS_DIR/fiftybox-orchestration.md"
 cp "$SCRIPT_DIR/commands/fiftybox-plans.md" "$COMMANDS_DIR/fiftybox-plans.md"
 log "Installed commands/fiftybox-plans.md → $COMMANDS_DIR/fiftybox-plans.md"
+cp "$SCRIPT_DIR/commands/fiftybox-execute.md" "$COMMANDS_DIR/fiftybox-execute.md"
+log "Installed commands/fiftybox-execute.md → $COMMANDS_DIR/fiftybox-execute.md"
 cp "$SCRIPT_DIR/commands/fiftybox-local.md" "$COMMANDS_DIR/fiftybox-local.md"
 log "Installed commands/fiftybox-local.md → $COMMANDS_DIR/fiftybox-local.md"
 cp "$SCRIPT_DIR/commands/fiftybox-local-execute.md" "$COMMANDS_DIR/fiftybox-local-execute.md"

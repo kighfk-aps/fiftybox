@@ -25,14 +25,15 @@ def test_all_phases_present():
         assert phase in content, f"{phase} section missing from SKILL.md"
 
 
-def test_explore_uses_ollama():
+def test_explore_uses_glm():
     content = SKILL_PATH.read_text()
-    assert "--explore-model" in content
+    assert "GLM-5.4" in content
+    assert "select_remote_model.sh" in content
 
 
-def test_explore_uses_fast_model():
+def test_explore_uses_qwen_summary_index():
     content = SKILL_PATH.read_text()
-    assert "deepseek-v4-flash" in content
+    assert "qwen-summary-index" in content
 
 
 def test_codex_reviews_plan():

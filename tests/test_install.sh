@@ -22,6 +22,7 @@ CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
 CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-euecute"
+CODEX_PI_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/pi-execute"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
 # Run install.sh
@@ -71,6 +72,10 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "fiftybox-plans.md command installed" \
     || fail "fiftybox-plans.md command not installed"
 
+[[ -f "$COMMANDS_DIR/fiftybox-execute.md" ]] \
+    && pass "fiftybox-execute.md command installed" \
+    || fail "fiftybox-execute.md command not installed"
+
 [[ -f "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md" ]] \
     && pass "Codex fiftybox-plans skill installed" \
     || fail "Codex fiftybox-plans skill not installed"
@@ -86,6 +91,14 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
     && pass "Claude fiftybox-local-execute skill installed" \
     || fail "Claude fiftybox-local-execute skill not installed"
+
+[[ -f "$CODEX_PI_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+    && pass "Codex pi-execute skill installed" \
+    || fail "Codex pi-execute skill not installed"
+
+[[ -f "$CODEX_PI_EXECUTE_SKILL_DIR/agents/openai.yaml" ]] \
+    && pass "Codex pi-execute OpenAI metadata installed" \
+    || fail "Codex pi-execute OpenAI metadata not installed"
 
 [[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
     && pass "fiftybox-local select_remote_model.sh installed executable" \

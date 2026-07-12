@@ -538,7 +538,7 @@ When Phase 5 (implement) returns `no_changes` with `"claimedSuccess": true` and 
 - Never auto-recover from failures except the single Phase 5 retry on test failures from Phase 6.
 - Never force push, force merge, reset hard, or delete branches with `-D`.
 - Never push before Phase 7.
-- Never allow Pi CLI implementation agents to commit or push.
+- Pi CLI implementation agents are instructed not to commit or push (prompt-enforced only — the agent has shell access and nothing in orchestrate.py blocks a `git commit`/`git push` it runs on its own; the Claude Review Gate and Phase 6 review-test are the checks that catch it after the fact).
 - Keep implementation changes inside the generated worktree.
 - Use artifact files for all handoffs because agents do not share session memory.
 - **TDD-specific:** Pi CLI must NOT modify test files written by Claude in Phase 4.5.

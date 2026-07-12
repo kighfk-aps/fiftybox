@@ -17,7 +17,7 @@ Rules: each story must produce concrete evidence before proceeding to the next. 
 
 ## 2. Deep investigation (debugging / unknown cause / review)
 
-Read and follow `skills/fablize/investigation-protocol.txt`: reproduce first → form 3+ competing hypotheses → gather evidence per hypothesis → trace the full causal chain (removing the symptom is not removing the defect) → verify before and after → report the hypotheses you rejected. For reviews, report everything including low-confidence findings and filter in a separate step.
+Read and follow `investigation-protocol.txt`, located in this skill's own directory (the same directory as this SKILL.md file — not resolved relative to the current working directory): reproduce first → form 3+ competing hypotheses → gather evidence per hypothesis → trace the full causal chain (removing the symptom is not removing the defect) → verify before and after → report the hypotheses you rejected. For reviews, report everything including low-confidence findings and filter in a separate step.
 
 ## 3. Working style (always)
 

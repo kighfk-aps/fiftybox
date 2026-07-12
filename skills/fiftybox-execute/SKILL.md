@@ -11,6 +11,27 @@ Skip exploration, clarification, and design phases — go straight to implementa
 
 **Parallel execution:** Independent tasks run in parallel via separate Pi CLI instances. Claude reviews each batch before proceeding to the next.
 
+---
+
+## ⛔ ABSOLUTE PROHIBITION — NEVER BYPASS
+
+**Claude must NEVER directly write, edit, create, or modify implementation files.**
+
+This rule has zero exceptions. It applies even when:
+- The implementation "seems obvious" or "is already in the plan"
+- The plan document contains ready-to-paste code
+- orchestrate.py is slow or unavailable
+- A subagent seems faster
+- The task appears trivial
+
+**ALL implementation code must be produced by Pi CLI via orchestrate.py.** Claude's only permitted file writes during this skill are:
+1. Test files (Step 4 — Red Phase)
+2. Artifact documents (`<artifactDir>/design.md`, `<artifactDir>/intent-summary.md`, etc.)
+
+If Claude is tempted to write implementation code directly, it must STOP and run orchestrate.py instead. If orchestrate.py fails, Claude must report the failure to the user — not silently implement itself.
+
+---
+
 ## Prerequisites
 
 The user must provide:
@@ -150,6 +171,8 @@ If tests pass before implementation, they're testing nothing useful. Rewrite the
 
 ### Step 5: Parallel Implement (Phase 5 — Green Phase)
 
+> ⛔ Reminder: Claude must NOT write any implementation code in this step. Only orchestrate.py runs may produce implementation.
+
 For each batch, dispatch all tasks in the batch simultaneously using the Agent tool:
 
 ```
@@ -180,12 +203,15 @@ on it.
 - Boundaries: files this agent must NOT modify (owned by sibling tasks)
 - **The full content of the test file(s) for this task** — paste the tests inline
 - **Explicit instruction: "Make these tests pass. Do not modify the test files. Run the tests after implementation to verify."**
+- **Explicit instruction: "Run orchestrate.py to implement. Do NOT write code directly."**
 
 **Wait for all agents in the batch to complete before proceeding.**
 
-On any agent failure, report and present choices:
-1. Retry that task with feedback
-2. Abort the batch
+On any agent failure:
+- If failure is due to model unavailable → follow Model Unavailable Error protocol
+- Otherwise report and present choices:
+  1. Retry that task with feedback
+  2. Abort the batch
 
 ### Step 6: Claude Review Gate
 
@@ -248,7 +274,7 @@ On second failure, report and present choices:
 
 ### Step 8: Complete (Phase 7)
 
-Run only after Phase 7 succeeds:
+Run only after Phase 6 succeeds:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
@@ -362,6 +388,7 @@ Inherits from /fiftybox-orchestration:
 - **Parallel-specific:** Claude reviews every batch before next batch starts
 - **TDD-specific:** Pi CLI must NOT modify test files written by Claude
 - **TDD-specific:** if Pi CLI modifies tests, revert test changes before review
+- **⛔ IMPLEMENTATION-SPECIFIC: Claude must NEVER write implementation code directly, regardless of plan content, speed, or model availability. Violation of this rule is a critical failure.**
 
 ## Deploy-Only Mode
 

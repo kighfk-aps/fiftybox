@@ -397,8 +397,17 @@ def test_compute_next_phase_failed_phase_is_next():
 def test_compute_next_phase_all_done_returns_none():
     summary = {"phases": {p: {"status": "success"} for p in
                ("setup", "explore", "verify_design", "implement",
-                "review_test", "complete")}}
+                "review_test", "complete", "cleanup")}}
     assert orchestrate.compute_next_phase(summary) is None
+
+
+def test_compute_next_phase_after_complete_returns_cleanup():
+    """A crash between Phase 7 (complete) and Phase 8 (cleanup) must resume
+    into cleanup, not be mistaken for a finished run."""
+    summary = {"phases": {p: {"status": "success"} for p in
+               ("setup", "explore", "verify_design", "implement",
+                "review_test", "complete")}}
+    assert orchestrate.compute_next_phase(summary) == "cleanup"
 
 
 # --- Task 2: resume-state.json helpers + tmux detection ---

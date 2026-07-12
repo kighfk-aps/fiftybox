@@ -24,6 +24,26 @@ Use the first existing path:
 
 If neither exists, report that fiftybox-orchestration is not installed and stop.
 
+## Resolve The Local-Model Helper Scripts
+
+Phase 2 needs `select_remote_model.sh` / `stop_remote_model.sh` from the `fiftybox-local` skill. Resolve the directory in this order, same as `/fiftybox-local` does:
+
+```bash
+for dir in \
+  "${CODEX_HOME:-$HOME/.codex}/skills/fiftybox-local/scripts" \
+  "$HOME/.claude/skills/fiftybox-local/scripts" \
+  "$(pwd)/skills/fiftybox-local/scripts"; do
+  if [ -x "$dir/select_remote_model.sh" ]; then
+    FIFTYBOX_LOCAL_HELPER_DIR="$dir"
+    break
+  fi
+done
+test -n "${FIFTYBOX_LOCAL_HELPER_DIR:-}" || {
+  echo "fiftybox-local helper scripts not found" >&2
+  exit 1
+}
+```
+
 ## Phase 1: Setup
 
 Run:
@@ -36,10 +56,10 @@ Read the JSON output and keep `artifactDir` and `worktree`.
 
 ## Phase 2: Explore
 
-Qwen3.5 9B 262K(Ollama) 고정 사용. 탐색 시작 직전에 환경변수를 Ollama endpoint로 설정한다:
+GLM-5.4 (Z.AI API) 고정 사용. 탐색 시작 직전에 환경변수를 Z.AI API endpoint로 설정한다:
 
 ```bash
-eval "$("$HOME/.claude/skills/fiftybox-local/scripts/select_remote_model.sh" 9b)"
+eval "$("$FIFTYBOX_LOCAL_HELPER_DIR/select_remote_model.sh" glm-5.4)"
 export QWEN_SUMMARY_MAX_CHARS_PER_FILE="500"
 export QWEN_SUMMARY_FILE_BATCH_MAX_FILES="2"
 export QWEN_SUMMARY_FILE_BATCH_MAX_TOKENS="1800"
@@ -49,7 +69,7 @@ export QWEN_SUMMARY_FINAL_MAX_TOKENS="1200"
 export QWEN_SUMMARY_TIMEOUT="900"
 ```
 
-`qwen-summary-index`를 9B의 context tier인 `256k`로 실행한다:
+`qwen-summary-index`를 GLM-5.4의 context tier인 `256k`로 실행한다:
 
 ```bash
 python3 /Users/tanpapa/Desktop/develop-a/local-model/bin/qwen-summary-index "$(pwd)" \
@@ -65,10 +85,10 @@ latest="$(ls -td "<artifactDir>/qwen-explore"/run-* 2>/dev/null | head -1)"
 cp "$latest/final-summary.md" "<artifactDir>/explore-report.md"
 ```
 
-복사 완료 즉시 환경변수를 정리한다. Ollama는 공유 서비스이므로 컨테이너를 내리지 않는다:
+복사 완료 즉시 환경변수를 정리한다. GLM-5.4는 외부 API이므로 서버를 내리지 않는다:
 
 ```bash
-"$HOME/.claude/skills/fiftybox-local/scripts/stop_remote_model.sh" 9b
+"$FIFTYBOX_LOCAL_HELPER_DIR/stop_remote_model.sh" glm-5.4
 unset QWEN_SUMMARY_BASE_URL QWEN_SUMMARY_MODEL QWEN_SUMMARY_API_KEY
 unset QWEN_SUMMARY_MAX_CHARS_PER_FILE QWEN_SUMMARY_FILE_BATCH_MAX_TOKENS
 unset QWEN_SUMMARY_FILE_BATCH_MAX_FILES QWEN_SUMMARY_SINGLE_FILE_MAX_TOKENS
@@ -83,7 +103,7 @@ unset QWEN_SUMMARY_FINAL_MAX_TOKENS
 
 실패 시 처리 순서:
 1. `qwen-summary-index`가 비정상 종료하거나 `final-summary.md`가 생성되지 않으면 한 번 재시도한다.
-2. 재시도도 실패하면 `stop_remote_model.sh 9b`를 실행하고, 환경변수를 정리한 뒤, 아래 형식으로 실패 보고를 작성하고 즉시 중단한다.
+2. 재시도도 실패하면 `stop_remote_model.sh glm-5.4`를 실행하고, 환경변수를 정리한 뒤, 아래 형식으로 실패 보고를 작성하고 즉시 중단한다.
 
 ```
 **Phase 2 (EXPLORE) 실패**
@@ -93,8 +113,8 @@ unset QWEN_SUMMARY_FINAL_MAX_TOKENS
 **보존된 artifactDir:** <artifactDir>
 
 **추천 행동:**
-1. 9B 모델 상태 확인 후 재실행
-2. 원격 GPU 재부팅 후 재실행
+1. GLM-5.4 API 상태 확인 후 재실행
+2. GLM_API_KEY 유효 여부 확인 후 재실행
 3. 작업 중단
 ```
 

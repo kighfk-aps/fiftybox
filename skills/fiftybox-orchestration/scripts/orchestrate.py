@@ -17,6 +17,13 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 
+# This script is a shared engine invoked by several sibling skills
+# (fiftybox-orchestration, fiftybox-plans, pi-execute, fiftybox-execute,
+# fiftybox-local-execute) that each only use a subset of these phases —
+# an unused phase here is not dead code, just unused by the skill you're
+# currently reading. "deploy" (used by the execute-family skills, depends
+# on "complete") is distinct from "pi-deploy" (depends on "pi-complete",
+# currently unused by any skill).
 PHASE_CHOICES = (
     "setup",
     "explore",
@@ -27,6 +34,7 @@ PHASE_CHOICES = (
     "implement",
     "review-test",
     "complete",
+    "deploy",
     "pi-complete",
     "pi-deploy",
     "cleanup",
@@ -57,6 +65,7 @@ PHASE_DEPENDENCIES: dict[str, list[str]] = {
     "implement": ["setup", "verify_design"],
     "review-test": ["implement"],
     "complete": ["review_test"],
+    "deploy": ["complete"],
     "pi-complete": ["review_test"],
     "pi-deploy": ["pi_complete"],
     "cleanup": [],
@@ -374,6 +383,7 @@ RESUME_PHASE_ORDER = (
     "implement",
     "review_test",
     "complete",
+    "cleanup",
 )
 
 
@@ -2268,7 +2278,8 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
     is_retry = args.is_retry
     logger = PhaseLogger(artifact_dir, 7, "review-test", is_retry=is_retry)
     test_command = args.test_command or detect_test_command(worktree)
-    logger.start(cmd=f"{test_command or 'no test command'} + codex review", cwd=str(worktree))
+    review_label = "codex review" if not args.skip_codex_review else "codex review skipped"
+    logger.start(cmd=f"{test_command or 'no test command'} + {review_label}", cwd=str(worktree))
 
     test_exit = 0
     test_output = ""
@@ -2287,7 +2298,12 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
         logger.log(f"Test exit code: {test_exit}")
         logger.log(test_output)
     else:
-        logger.log("No test command detected; relying on Codex review")
+        logger.log(
+            "No test command detected and Codex review skipped; implementation "
+            "will be treated as approved without verification"
+            if args.skip_codex_review
+            else "No test command detected; relying on Codex review"
+        )
 
     test_results_path = artifact_dir / ("test-results-retry.md" if is_retry else "test-results.md")
     test_results_path.write_text(
@@ -2295,8 +2311,11 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
         encoding="utf-8",
     )
 
+    codex_result = None
     if args.dry_run:
         codex_output = "APPROVED: dry-run implementation review skipped."
+    elif args.skip_codex_review:
+        codex_output = "APPROVED: Codex review skipped (--skip-codex-review)."
     else:
         diff_result = run(["git", "diff"], worktree)
         staged_diff_result = run(["git", "diff", "--cached"], worktree)
@@ -2832,6 +2851,121 @@ Then provide:
     return 0
 
 
+def phase_deploy(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
+    """Deploy after Phase 8 `complete` (git-merged-to-main), as used by the
+    pi-execute / fiftybox-execute / fiftybox-local-execute skill family.
+
+    Distinct from `pi-deploy`, which follows `pi-complete` (agent-pushed
+    branch, no merge to main) and is unused by any current skill.
+    """
+    summary = ensure_summary(artifact_dir)
+    worktree = Path(summary["worktree"])
+    _deploy_agent = load_agent_config(SKILL_DIR)["implement_agent"]
+    logger = PhaseLogger(artifact_dir, 9, "deploy")
+    logger.start(cmd=f"{_deploy_agent} [deploy] model={args.model}", cwd=str(worktree))
+
+    complete_status = summary.get("phases", {}).get("complete", {}).get("status")
+    if complete_status != "success" and not args.dry_run:
+        err = f"Phase 9 blocked: Phase 8 complete status is {complete_status!r}, expected 'success'"
+        logger.log(err)
+        logger.finish(1, "failed")
+        summary["phases"]["deploy"] = phase_record("blocked", logger, error=err)
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="deploy", error=err, artifact_dir=artifact_dir)
+
+    if args.dry_run:
+        deployed_output = "DEPLOYED: dry-run deploy skipped."
+        log_path = write_artifact(artifact_dir, "deploy-log.md", f"# Deploy Log\n\n{deployed_output}\n")
+        logger.log("[DRY RUN] Wrote placeholder deploy-log.md")
+        logger.finish(0, "dry_run")
+        summary["phases"]["deploy"] = phase_record("dry_run", logger, logPath=str(log_path))
+        summary.setdefault("files", {})["deployLog"] = str(log_path)
+        write_json(artifact_dir / "summary.json", summary)
+        print(json.dumps({"status": "dry_run", "phase": "deploy", "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":"))
+)
+        return 0
+
+    deploy_instruction = args.deploy_command.strip() if args.deploy_command else ""
+    prompt = f"""You are running the deploy phase for a finished implementation in this repository.
+
+## Task
+
+{fence_user_input("task", args.task)}
+
+## Constraints
+
+- Inspect the repository and detect the most trustworthy deploy command for this project.
+- If an explicit deploy command is provided below, run exactly that command and do not infer another one.
+- If no trustworthy deploy command exists, stop instead of guessing.
+- Run exactly one deploy path.
+- Do NOT commit, push, force push, merge, rebase, reset, or modify unrelated files.
+
+{f"## Explicit Deploy Command\n\n{deploy_instruction}" if deploy_instruction else ""}
+
+## Final Response
+
+Respond on the FIRST LINE with exactly one of:
+DEPLOYED: <command and target summary>
+FAILED: <one-line reason>
+
+Then provide:
+- deploy command used
+- evidence of success or failure
+- any follow-up checks the operator should run
+"""
+    agent_config = load_agent_config(SKILL_DIR)
+    adapters_dir = SKILL_DIR / "adapters"
+    agent_name = agent_config["implement_agent"]
+    try:
+        cmd = build_agent_cmd(agent_name, agent_config, prompt=prompt, task=args.task,
+                              model=args.model, provider=args.provider, adapters_dir=adapters_dir)
+    except ValueError as exc:
+        logger.log(f"[AGENT ERROR] {exc}")
+        logger.finish(1, "failed")
+        summary["phases"]["deploy"] = phase_record("deploy_failed", logger, error=str(exc))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="deploy", error=str(exc), artifact_dir=artifact_dir)
+    if cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
+    try:
+        result_proc = run(cmd, worktree, timeout=args.implementation_timeout)
+    except subprocess.TimeoutExpired:
+        logger.log(f"[TIMEOUT] {agent_name} exceeded {args.implementation_timeout}s timeout")
+        logger.finish(124, "failed")
+        summary["phases"]["deploy"] = phase_record("timeout", logger)
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="deploy", error=f"{agent_name} timeout ({args.implementation_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+
+    logger.log(result_proc.stdout)
+    log_path = write_artifact(artifact_dir, "deploy-log.md", f"# Deploy Log\n\n```\n{result_proc.stdout}\n```\n")
+    summary.setdefault("files", {})["deployLog"] = str(log_path)
+
+    if result_proc.returncode != 0:
+        logger.finish(result_proc.returncode, "failed")
+        summary["phases"]["deploy"] = phase_record("failed", logger, logPath=str(log_path))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="deploy", error=result_proc.stdout[-2000:], artifact_dir=artifact_dir, exit_code=result_proc.returncode)
+
+    verdict, details = parse_prefixed_verdict(result_proc.stdout, "DEPLOYED")
+    if verdict != "success":
+        logger.finish(1, "failed")
+        summary["phases"]["deploy"] = phase_record("deploy_failed" if verdict == "failed" else "unclear", logger, logPath=str(log_path))
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(
+            phase="deploy",
+            error=f"Pi deploy {verdict}: {details[:500]}",
+            artifact_dir=artifact_dir,
+            extra={"piFeedback": result_proc.stdout[-2000:]},
+        )
+
+    logger.finish(0, "success")
+    summary["phases"]["deploy"] = phase_record("success", logger, logPath=str(log_path), verdict=details)
+    write_json(artifact_dir / "summary.json", summary)
+    print(json.dumps({"status": "success", "phase": "deploy", "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":"))
+)
+    return 0
+
+
 def phase_resume(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     out = {
@@ -2948,6 +3082,17 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "block regardless of this flag."
         ),
     )
+    parser.add_argument(
+        "--skip-codex-review",
+        action="store_true",
+        help=(
+            "Skip the Codex review call in Phase 6 (review-test) entirely. "
+            "The phase still runs the objective test command and gates on it; "
+            "the Codex verdict is recorded as an auto-approval instead of being "
+            "invoked. Used by callers (e.g. pi-execute) whose own review step "
+            "already covers spec compliance without Codex."
+        ),
+    )
     parser.add_argument("--feedback", default="", help="Codex feedback for retry")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--agent-timeout", type=int, default=300)
@@ -2997,6 +3142,7 @@ def main(argv: list[str] | None = None) -> int:
         "implement": phase_implement,
         "review-test": phase_review_test,
         "complete": phase_complete,
+        "deploy": phase_deploy,
         "pi-complete": phase_pi_complete,
         "pi-deploy": phase_pi_deploy,
         "cleanup": phase_cleanup,

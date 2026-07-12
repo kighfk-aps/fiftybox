@@ -279,26 +279,31 @@ Since parallel tasks ran independently:
 
 ### Step 7: Review + Test (Phase 6)
 
+Codex plays no role in pi-execute — spec compliance and integration checks are
+already covered by the Claude Review Gate (Step 6). This phase only runs the
+objective test command; pass `--skip-codex-review` so orchestrate.py never
+shells out to Codex:
+
 After all batches pass the Claude Review Gate:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>"
+  --artifact-dir "<artifactDir>" --skip-codex-review
 ```
 
-On first failure, **automatically retry** the failing task's Phase 5 once with Codex feedback:
+On first failure, **automatically retry** the failing task's Phase 5 once with the test failure output as feedback:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
   --provider <IMPL_PROVIDER> --model <IMPL_MODEL> \
-  --skip-verify --is-retry --feedback "<codex feedback>"
+  --skip-verify --is-retry --feedback "<test failure output>"
 
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --is-retry
+  --artifact-dir "<artifactDir>" --is-retry --skip-codex-review
 ```
 
 On second failure, report and present choices:
