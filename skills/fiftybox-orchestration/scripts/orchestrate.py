@@ -18,7 +18,7 @@ from typing import Any
 
 
 # This script is a shared engine invoked by several sibling skills
-# (fiftybox-orchestration, fiftybox-plans, pi-execute, fiftybox-execute,
+# (fiftybox-orchestration, fiftybox-plans, fiftybox-execute,
 # fiftybox-local-execute) that each only use a subset of these phases —
 # an unused phase here is not dead code, just unused by the skill you're
 # currently reading. "deploy" (used by the execute-family skills, depends
@@ -1132,10 +1132,11 @@ def phase_setup(root: Path, args: argparse.Namespace) -> int:
     logger = PhaseLogger(artifact_dir, 0, "setup")
     logger.start(cmd="git worktree add + prerequisite check", cwd=str(root))
 
-    # codex and claude are always required — they are orchestration tools, not swappable agents
-    codex_bin = shutil.which("codex")
+    # claude is always required — it is an orchestration tool, not a swappable agent.
+    # Codex was retired (subscription cancelled); design and implementation reviews no
+    # longer shell out to it, so the codex binary is no longer a prerequisite.
     claude_bin = shutil.which("claude")
-    missing = [name for name, value in (("codex", codex_bin), ("claude", claude_bin)) if not value]
+    missing = [name for name, value in (("claude", claude_bin),) if not value]
     if missing and not args.dry_run:
         err = f"Missing required CLIs: {', '.join(missing)}"
         logger.log(err)
@@ -1626,6 +1627,40 @@ def _emit_advisory(
     return 0
 
 
+def run_design_review_agent(
+    worktree: Path,
+    provider: str,
+    model: str,
+    prompt: str,
+    timeout: int,
+    *,
+    logger: "PhaseLogger | None" = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run a read-only design review through the configured agent.
+
+    This is the opt-in GLM replacement for the retired Codex design review. It reuses
+    the explore agent template (e.g. Pi) with the given provider/model, so
+    `--design-review-provider zai-coding --design-review-model glm-5.2` runs the review
+    on GLM. Read-only by contract: the task instructs the agent not to touch files.
+    """
+    agent_config = load_agent_config(SKILL_DIR)
+    agent_name = agent_config.get("explore_agent", "pi")
+    adapters_dir = SKILL_DIR / "adapters"
+    review_task = (
+        "Design review only. Read the design in the system prompt and respond with a "
+        "verdict. Do not edit, create, or delete any files."
+    )
+    cmd = build_agent_cmd(
+        agent_name, agent_config, prompt=prompt, task=review_task,
+        model=model, provider=provider, adapters_dir=adapters_dir,
+    )
+    if cmd and cmd[0].endswith(".sh"):
+        cmd = ["bash"] + cmd
+    if logger is not None:
+        logger.log(f"$ {agent_name} [design review] provider={provider} model={model}")
+    return run(cmd, worktree, timeout=timeout)
+
+
 def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
@@ -1633,7 +1668,17 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
     design_path = artifact_dir / "design.md"
     intent_path = artifact_dir / "intent-summary.md"
     explore_path = artifact_dir / "explore-report.md"
-    logger.start(cmd=f"codex exec --sandbox read-only --model {args.codex_model} [design review]", cwd=str(worktree))
+    review_provider = (args.design_review_provider or "").strip()
+    review_model = (args.design_review_model or "").strip()
+    reviewer_active = bool(review_provider and review_model)
+    logger.start(
+        cmd=(
+            f"design review via {review_provider}/{review_model}"
+            if reviewer_active
+            else "design review skipped (Codex retired; no GLM reviewer configured)"
+        ),
+        cwd=str(worktree),
+    )
 
     if not design_path.exists():
         err = "design.md not found; design-plan must complete first"
@@ -1645,16 +1690,37 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
 
     if args.dry_run:
         output = "APPROVED: dry-run design review skipped."
-        (artifact_dir / "codex-design-review.md").write_text(f"# Codex Design Review\n\n{output}\n", encoding="utf-8")
-        logger.log("[DRY RUN] Wrote placeholder codex-design-review.md")
+        (artifact_dir / "design-review.md").write_text(f"# Design Review\n\n{output}\n", encoding="utf-8")
+        logger.log("[DRY RUN] Wrote placeholder design-review.md")
         logger.finish(0, "dry_run")
         summary["phases"]["verify_design"] = phase_record("dry_run", logger, verdict=output)
-        summary.setdefault("files", {})["codexDesignReview"] = str(artifact_dir / "codex-design-review.md")
+        summary.setdefault("files", {})["designReview"] = str(artifact_dir / "design-review.md")
         write_json(artifact_dir / "summary.json", summary)
         print(json.dumps({"status": "dry_run", "phase": "verify-design", "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":"))
 )
         return 0
 
+    review_path = artifact_dir / "design-review.md"
+
+    # Codex is retired. With no GLM reviewer configured, skip the design review entirely
+    # and record an advisory pass so implement can proceed. A GLM review is opt-in (via
+    # --design-review-provider/--design-review-model) for a very complex architecture only.
+    if not reviewer_active:
+        note = (
+            "SKIPPED: design review not requested. Codex review is retired; pass "
+            "--design-review-provider/--design-review-model (e.g. zai-coding / glm-5.2) "
+            "to run a GLM design review for a very complex architecture."
+        )
+        review_path.write_text(f"# Design Review\n\n{note}\n", encoding="utf-8")
+        summary.setdefault("files", {})["designReview"] = str(review_path)
+        logger.log("[SKIP] " + note)
+        logger.finish(0, "success")
+        return _emit_advisory(
+            "verify_design", "verify-design", summary, artifact_dir, logger,
+            feedback=note, verdict="skipped", review=str(review_path),
+        )
+
+    # Opt-in GLM design review (complex architecture): run through the configured agent.
     design_content = design_path.read_text(encoding="utf-8", errors="replace")
     intent_content = intent_path.read_text(encoding="utf-8", errors="replace") if intent_path.exists() else ""
     explore_content = explore_path.read_text(encoding="utf-8", errors="replace")[:3000] if explore_path.exists() else ""
@@ -1669,52 +1735,36 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
         "Then provide detailed feedback below."
     )
     try:
-        codex_result = codex_exec(worktree, args.codex_model, review_prompt, args.agent_timeout, logger=logger)
+        review_result = run_design_review_agent(
+            worktree, review_provider, review_model, review_prompt,
+            args.agent_timeout, logger=logger,
+        )
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] Codex exceeded {args.agent_timeout}s")
+        logger.log(f"[TIMEOUT] design review ({review_provider}/{review_model}) exceeded {args.agent_timeout}s")
         logger.finish(124, "failed")
         if args.strict_review:
             summary["phases"]["verify_design"] = phase_record("timeout", logger)
             write_json(artifact_dir / "summary.json", summary)
-            return fail_json(phase="verify-design", error=f"Codex timeout ({args.agent_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
+            return fail_json(phase="verify-design", error=f"Design review timeout ({args.agent_timeout}s)", artifact_dir=artifact_dir, exit_code=124)
         # Advisory mode: record as success with advisory flag and continue
         return _emit_advisory(
             "verify_design", "verify-design", summary, artifact_dir, logger,
-            feedback=f"Codex timeout ({args.agent_timeout}s): review unavailable",
+            feedback=f"Design review timeout ({args.agent_timeout}s): review unavailable",
             verdict="timeout",
         )
 
-    codex_output = codex_result.stdout
-    logger.log(sanitize_output(codex_output))
-    review_path = artifact_dir / "codex-design-review.md"
-    review_path.write_text(f"# Codex Design Review\n\n{strip_codex_banner(codex_output)}\n", encoding="utf-8")
-    summary.setdefault("files", {})["codexDesignReview"] = str(review_path)
+    review_output = review_result.stdout
+    logger.log(sanitize_output(review_output))
+    review_path.write_text(
+        f"# Design Review ({review_provider}/{review_model})\n\n{review_output}\n",
+        encoding="utf-8",
+    )
+    summary.setdefault("files", {})["designReview"] = str(review_path)
 
-    if codex_result.returncode != 0 and is_codex_api_error(codex_output):
-        cause = classify_codex_error(codex_output)
-        logger.log(f"[DIAGNOSIS] {cause}")
-        logger.finish(codex_result.returncode, "api_error")
-        if args.strict_review:
-            summary["phases"]["verify_design"] = phase_record("api_error", logger, review=str(review_path), cause=cause)
-            write_json(artifact_dir / "summary.json", summary)
-            return fail_json(
-                phase="verify-design",
-                error=f"Codex API error ({cause})",
-                artifact_dir=artifact_dir,
-                extra={"retriable": True, "cause": cause, "codexOutput": sanitize_output(codex_output[-2000:])},
-            )
-        # Advisory mode: record as success with advisory flag and continue
-        return _emit_advisory(
-            "verify_design", "verify-design", summary, artifact_dir, logger,
-            feedback=sanitize_output(codex_output[-2000:]) or f"Codex API error: {cause}",
-            verdict=cause,
-            review=str(review_path),
-        )
-
-    verdict, details = parse_codex_verdict(codex_output)
-    if codex_result.returncode != 0 and verdict not in ("approved", "api_error"):
+    verdict, details = parse_codex_verdict(review_output)
+    if review_result.returncode != 0 and verdict != "approved":
         verdict = "rejected"
-        details = codex_output[-2000:] or f"Codex exited {codex_result.returncode}"
+        details = review_output[-2000:] or f"Design review agent exited {review_result.returncode}"
 
     if verdict != "approved":
         logger.finish(1, "failed")
@@ -1723,14 +1773,14 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
             write_json(artifact_dir / "summary.json", summary)
             return fail_json(
                 phase="verify-design",
-                error=f"Codex verdict {verdict}: {details[:500]}",
+                error=f"Design review verdict {verdict}: {details[:500]}",
                 artifact_dir=artifact_dir,
-                extra={"codexFeedback": codex_output[-2000:]},
+                extra={"reviewFeedback": review_output[-2000:]},
             )
         # Advisory mode: record as success with advisory flag and continue
         return _emit_advisory(
             "verify_design", "verify-design", summary, artifact_dir, logger,
-            feedback=codex_output[-2000:] or f"Codex {verdict}: no output",
+            feedback=review_output[-2000:] or f"Design review {verdict}: no output",
             verdict=verdict if verdict != "unclear" else f"unclear: {details[:200]}",
             review=str(review_path),
         )
@@ -2853,7 +2903,7 @@ Then provide:
 
 def phase_deploy(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     """Deploy after Phase 8 `complete` (git-merged-to-main), as used by the
-    pi-execute / fiftybox-execute / fiftybox-local-execute skill family.
+    fiftybox-execute / fiftybox-local-execute skill family.
 
     Distinct from `pi-deploy`, which follows `pi-complete` (agent-pushed
     branch, no merge to main) and is unused by any current skill.
@@ -3053,14 +3103,27 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--task", required=True)
     parser.add_argument("--artifact-dir", help="Existing artifact dir for phases after setup")
     parser.add_argument("--provider", default="opencode-go")
-    parser.add_argument("--model", default="deepseek-v4-pro")
+    parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument(
         "--explore-model",
         default="deepseek-v4-flash",
         help="Lightweight model for read-only exploration (default: deepseek-v4-flash). "
-        "The heavy --model is reserved for implementation.",
+        "Implementation (--model) also defaults to deepseek-v4-flash on opencode-go.",
     )
     parser.add_argument("--codex-model", default="gpt-5.4")
+    parser.add_argument(
+        "--design-review-provider",
+        default="",
+        help="Agent provider for the optional Phase 4 design review (verify-design). "
+        "Empty (default) skips the design review entirely — Codex is retired. Set to a "
+        "GLM provider (e.g. zai-coding) only for a very complex architecture.",
+    )
+    parser.add_argument(
+        "--design-review-model",
+        default="",
+        help="Agent model for the optional Phase 4 design review (e.g. glm-5.2). "
+        "Requires --design-review-provider; empty (default) skips the review.",
+    )
     parser.add_argument("--claude-model", default="claude-opus-4-6")
     parser.add_argument("--test-command", default="")
     parser.add_argument("--deploy-command", default="")
@@ -3068,7 +3131,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument(
         "--skip-verify",
         action="store_true",
-        help="Drop the verify_design dependency for implement. Used by the pi-execute "
+        help="Drop the verify_design dependency for implement. Used by the fiftybox-execute "
         "entrypoint, which does design/verification externally and skips those phases.",
     )
     parser.add_argument(
@@ -3089,7 +3152,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "Skip the Codex review call in Phase 6 (review-test) entirely. "
             "The phase still runs the objective test command and gates on it; "
             "the Codex verdict is recorded as an auto-approval instead of being "
-            "invoked. Used by callers (e.g. pi-execute) whose own review step "
+            "invoked. Used by callers (e.g. fiftybox-execute) whose own review step "
             "already covers spec compliance without Codex."
         ),
     )

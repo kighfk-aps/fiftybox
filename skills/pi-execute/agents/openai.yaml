@@ -1,4 +1,0 @@
-name: pi-execute
-display_name: Pi Execute
-description: Run the Pi CLI TDD execute pipeline after design and planning are already complete.
-default_prompt: '$pi-execute "implement the requested design with Pi CLI TDD execution"'

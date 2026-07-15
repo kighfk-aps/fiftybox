@@ -9,8 +9,6 @@ LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
-CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-euecute"
-CODEX_PI_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/pi-execute"
 COMMANDS_DIR="$HOME/.claude/commands"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -21,7 +19,7 @@ log "Installing fiftybox orchestrate harness..."
 echo ""
 
 # Check prerequisites — warn but don't abort so partial installs still work
-for bin in pi codex claude; do
+for bin in pi claude; do
   if command -v "$bin" &>/dev/null; then
     log "  ✓ $bin"
   else
@@ -58,15 +56,6 @@ mkdir -p "$EXECUTE_SKILL_DIR"
 cp "$SCRIPT_DIR/skills/fiftybox-execute/SKILL.md" "$EXECUTE_SKILL_DIR/SKILL.md"
 log "Installed Claude skill fiftybox-execute → $EXECUTE_SKILL_DIR"
 
-# Install pi-execute skill for Codex
-mkdir -p "$CODEX_PI_EXECUTE_SKILL_DIR"
-cp "$SCRIPT_DIR/skills/pi-execute/SKILL.md" "$CODEX_PI_EXECUTE_SKILL_DIR/SKILL.md"
-if [[ -d "$SCRIPT_DIR/skills/pi-execute/agents" ]]; then
-  mkdir -p "$CODEX_PI_EXECUTE_SKILL_DIR/agents"
-  cp "$SCRIPT_DIR/skills/pi-execute/agents/"* "$CODEX_PI_EXECUTE_SKILL_DIR/agents/"
-fi
-log "Installed Codex skill pi-execute → $CODEX_PI_EXECUTE_SKILL_DIR"
-
 # Install fiftybox-local-execute skill
 mkdir -p "$LOCAL_EXECUTE_SKILL_DIR"
 cp "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md"
@@ -84,13 +73,6 @@ if [[ -d "$SCRIPT_DIR/skills/fiftybox-local-execute/agents" ]]; then
   cp "$SCRIPT_DIR/skills/fiftybox-local-execute/agents/"* "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents/"
 fi
 log "Installed Codex skill fiftybox-local-execute → $CODEX_LOCAL_EXECUTE_SKILL_DIR"
-
-# Install typo compatibility alias requested as fiftybox-local-euecute
-if [[ -d "$SCRIPT_DIR/skills/fiftybox-local-euecute" ]]; then
-  mkdir -p "$CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR"
-  cp "$SCRIPT_DIR/skills/fiftybox-local-euecute/SKILL.md" "$CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR/SKILL.md"
-  log "Installed Codex typo alias fiftybox-local-euecute → $CODEX_LOCAL_EXECUTE_TYPO_SKILL_DIR"
-fi
 
 # Install planning skill for Claude slash commands and Codex-global use
 mkdir -p "$PLANS_SKILL_DIR"
@@ -140,10 +122,6 @@ cp "$SCRIPT_DIR/commands/fiftybox-local.md" "$COMMANDS_DIR/fiftybox-local.md"
 log "Installed commands/fiftybox-local.md → $COMMANDS_DIR/fiftybox-local.md"
 cp "$SCRIPT_DIR/commands/fiftybox-local-execute.md" "$COMMANDS_DIR/fiftybox-local-execute.md"
 log "Installed commands/fiftybox-local-execute.md → $COMMANDS_DIR/fiftybox-local-execute.md"
-if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-euecute.md" ]]; then
-  cp "$SCRIPT_DIR/commands/fiftybox-local-euecute.md" "$COMMANDS_DIR/fiftybox-local-euecute.md"
-  log "Installed typo alias commands/fiftybox-local-euecute.md → $COMMANDS_DIR/fiftybox-local-euecute.md"
-fi
 
 echo ""
 log "To configure agents: $SKILLS_DIR/configure.sh"

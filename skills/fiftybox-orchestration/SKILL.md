@@ -1,13 +1,13 @@
 ---
 name: fiftybox-orchestration
-description: Multi-agent orchestration harness with TDD. Explores via Pi CLI, clarifies intent, designs architecture, verifies with Codex, Claude writes failing tests, Pi CLI implements in parallel to pass them, Claude reviews, then commits, merges, pushes, and cleans up. Use when user invokes /fiftybox-orchestration or wants the full agent pipeline.
+description: Multi-agent orchestration harness with TDD. Explores via Pi CLI, clarifies intent, designs architecture (design review skipped by default — GLM only for a very complex architecture), Claude writes failing tests, Pi CLI implements in parallel to pass them, Claude reviews, then commits, merges, pushes, and cleans up. Use when user invokes /fiftybox-orchestration or wants the full agent pipeline.
 ---
 
 # Orchestrate Harness
 
 ## Overview
 
-Drive a full development lifecycle through Pi CLI, Claude Code, and Codex in an isolated git worktree with TDD discipline.
+Drive a full development lifecycle through Pi CLI and Claude Code in an isolated git worktree with TDD discipline. Codex has been retired: implementation runs on opencode-go / `deepseek-v4-flash`, and the design review is skipped by default (opt-in GLM review for a very complex architecture only).
 
 **Core loop:** Claude writes failing tests (Red) → Pi CLI implements to pass them in parallel (Green) → Claude reviews (Refactor gate)
 
@@ -207,7 +207,7 @@ After the agent completes, write `<artifactDir>/logs/phase-3-design.log`.
 
 ## Phase 4: VERIFY-DESIGN
 
-Run:
+**Codex is retired.** By default this phase skips the design review — run it as-is and it records an advisory pass so implement can proceed:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
@@ -215,9 +215,16 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --artifact-dir "<artifactDir>"
 ```
 
-The helper invokes Codex with a read-only design review prompt, writes `codex-design-review.md`, and requires a first-line `APPROVED:` or `REJECTED:` verdict.
+**Only when the architecture is genuinely complex** (many interacting components, non-obvious data flow, high blast radius) run an opt-in GLM design review by adding the reviewer flags. GLM = the Z.AI Coding Plan (`zai-coding` / `glm-5.2`):
 
-The Codex design review is **advisory**. After running, read `codex-design-review.md`. If the verdict is REJECTED or UNCLEAR:
+```bash
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
+  --phase verify-design --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --design-review-provider zai-coding --design-review-model glm-5.2
+```
+
+Either way the helper writes `design-review.md`. The GLM review is **advisory**. After running it, read `design-review.md`. If the verdict is REJECTED or UNCLEAR:
 - Summarize the specific concerns for the user (1-3 bullet points)
 - Proceed to the next phase by default
 - Only stop and ask the user if the concerns indicate a fundamental design flaw (e.g., security vulnerability, data loss risk, approach is technically infeasible)
@@ -337,7 +344,7 @@ Each agent runs its own Pi CLI instance:
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<specific task description>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --model deepseek-v4-pro
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash
 ```
 
 **Agent prompt must include:**
@@ -357,7 +364,7 @@ When parallelism is not applicable (single task or tightly coupled):
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --model deepseek-v4-pro
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash
 ```
 
 The Pi CLI agent receives the test files and must make them pass without modifying them.
@@ -377,7 +384,7 @@ On any agent failure, report and present choices:
 
 ## Phase 5.5: CLAUDE REVIEW GATE
 
-> **Note:** This Claude Review Gate is the primary blocking check for implementation quality. Codex (Phase 6) provides a secondary advisory opinion and does not block the pipeline.
+> **Note:** This Claude Review Gate is the primary — and now only — blocking check for implementation quality. Codex has been retired; Phase 6 runs just the objective test gate, with no LLM review.
 
 After each batch (or single implementation) completes, Claude performs a three-stage review:
 
@@ -415,22 +422,22 @@ Run after all batches pass the Claude Review Gate:
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>"
+  --artifact-dir "<artifactDir>" --skip-codex-review
 ```
 
-The helper runs the detected or provided test command, writes `test-results.md`, asks Codex for a read-only implementation review, writes `codex-review.md`, and requires an `APPROVED:` verdict.
+`--skip-codex-review` is required — Codex is retired. The helper runs the detected or provided test command, writes `test-results.md`, and gates on the objective test result only. Implementation quality was already checked by the Claude Review Gate (Phase 5.5).
 
 **If tests fail** (non-zero exit code): automatically retry the failing task's Phase 5 once with the test failure output as feedback:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --model deepseek-v4-pro \
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash \
   --is-retry --feedback "<test failure output>"
 
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --is-retry
+  --artifact-dir "<artifactDir>" --is-retry --skip-codex-review
 ```
 
 On second failure, stop and report choices:
@@ -440,12 +447,7 @@ On second failure, stop and report choices:
 3. Commit as-is without merge.
 4. Abort.
 
-**If Codex review is REJECTED or UNCLEAR** (but tests pass): The Codex review is advisory. Read `codex-review.md` and:
-- Summarize the specific concerns for the user (1-3 bullet points)
-- Offer 3 choices:
-  1. Apply Codex feedback and re-run Phase 5 (fix first)
-  2. Proceed to Phase 7 as-is (ignore Codex feedback)
-  3. Abort
+**No LLM review runs here.** Codex is retired, so Phase 6 gates on the objective test result only. Design-conformance and code-quality concerns are the Claude Review Gate's job (Phase 5.5); if something slipped through, re-run Phase 5.5 on the batch before proceeding to Phase 7.
 
 ## Phase 7: COMPLETE
 
@@ -515,15 +517,9 @@ Use this shape:
 3. <option 3>
 ```
 
-### API Error vs. Rejection
+### GLM Design Review Failures (opt-in only)
 
-When a Codex phase fails, check the JSON output for `"retriable": true`. If present, the failure is a transient API error (usage limit, auth error, rate limit), not a genuine design rejection or review failure. Present the user with:
-
-1. Retry the same phase (the API issue may have resolved).
-2. Skip Codex verification and proceed.
-3. Abort.
-
-Do NOT present "Revise design" as an option for API errors — the design was never reviewed.
+The Phase 4 design review is skipped by default. When you enable it (`--design-review-provider zai-coding --design-review-model glm-5.2`) it runs on GLM as an **advisory** step: a timeout, an agent error, or a REJECTED/UNCLEAR verdict is recorded in `design-review.md` and surfaced but does not stop the pipeline (unless you pass `--strict-review`). If the GLM review is unavailable, summarize what you can and proceed, or re-run the phase with the reviewer flags once the provider is reachable.
 
 ### No Changes After Implementation
 

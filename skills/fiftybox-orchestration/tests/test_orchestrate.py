@@ -307,10 +307,10 @@ def test_implement_blocked_without_verify_by_default():
     assert "verify_design" in err
 
 
-def test_skip_verify_unblocks_implement_for_pi_execute():
-    """pi-execute (--skip-verify) reaches implement with only setup done.
+def test_skip_verify_unblocks_implement_for_fiftybox_execute():
+    """fiftybox-execute (--skip-verify) reaches implement with only setup done.
 
-    Regression: the verify_design dependency permanently blocked pi-execute,
+    Regression: the verify_design dependency permanently blocked fiftybox-execute,
     which skips design/verification by design.
     """
     summary = {"phases": {"setup": {"status": "success"}}}
@@ -340,7 +340,7 @@ def test_explore_defaults_to_lightweight_model():
         ["--phase", "explore", "--task", "t", "--artifact-dir", "/tmp/x"]
     )
     assert args.explore_model == "deepseek-v4-flash"
-    assert args.model == "deepseek-v4-pro"  # heavy model still reserved for implement
+    assert args.model == "deepseek-v4-flash"  # implement is pinned to flash on opencode-go
     assert args.explore_timeout >= 600  # generous headroom over the old 300s
 
 
@@ -1322,8 +1322,15 @@ def _make_review_test_artifact_dir(tmp_path: "Path") -> "Path":
 
 
 def _advisory_args(*, strict: bool = False) -> "argparse.Namespace":
-    """Minimal parse_args Namespace for verify-design / review-test tests."""
-    flags = ["--phase", "verify-design", "--task", "t"]
+    """parse_args Namespace exercising the opt-in GLM design-review path.
+
+    verify-design skips entirely with no reviewer configured; these advisory/strict
+    tests configure a GLM reviewer (zai-coding / glm-5.2) so the verdict contract runs.
+    """
+    flags = [
+        "--phase", "verify-design", "--task", "t",
+        "--design-review-provider", "zai-coding", "--design-review-model", "glm-5.2",
+    ]
     if strict:
         flags.append("--strict-review")
     return orchestrate.parse_args(flags)
@@ -1350,7 +1357,7 @@ def test_verify_design_rejected_advisory_mode(tmp_path, capsys):
     args = _advisory_args()
     codex_ok = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="REJECTED: bad design\nSome details.")
-    with patch("orchestrate.codex_exec", return_value=codex_ok):
+    with patch("orchestrate.run_design_review_agent", return_value=codex_ok):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc == 0, f"Expected 0, got {rc}"
     summary = orchestrate.read_json(art / "summary.json")
@@ -1368,7 +1375,7 @@ def test_verify_design_rejected_strict_mode(tmp_path):
     args = _advisory_args(strict=True)
     codex_ok = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="REJECTED: bad design\nSome details.")
-    with patch("orchestrate.codex_exec", return_value=codex_ok):
+    with patch("orchestrate.run_design_review_agent", return_value=codex_ok):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc != 0, f"Expected non-zero exit in strict mode, got {rc}"
 
@@ -1380,7 +1387,7 @@ def test_verify_design_unclear_advisory_mode(tmp_path, capsys):
     args = _advisory_args()
     codex_ok = subprocess.CompletedProcess(
         args=[], returncode=0, stdout="The design looks interesting but needs more work.")
-    with patch("orchestrate.codex_exec", return_value=codex_ok):
+    with patch("orchestrate.run_design_review_agent", return_value=codex_ok):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc == 0, f"Expected 0 for unclear in advisory mode, got {rc}"
     summary = orchestrate.read_json(art / "summary.json")
@@ -1396,7 +1403,7 @@ def test_verify_design_timeout_advisory_mode(tmp_path, capsys):
     import json as _json
     art = _make_verify_design_artifact_dir(tmp_path)
     args = _advisory_args()
-    with patch("orchestrate.codex_exec", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
+    with patch("orchestrate.run_design_review_agent", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc == 0, f"Expected 0 for timeout in advisory mode, got {rc}"
     summary = orchestrate.read_json(art / "summary.json")
@@ -1411,7 +1418,7 @@ def test_verify_design_timeout_strict_mode(tmp_path):
     """TimeoutExpired with --strict-review returns non-zero."""
     art = _make_verify_design_artifact_dir(tmp_path)
     args = _advisory_args(strict=True)
-    with patch("orchestrate.codex_exec", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
+    with patch("orchestrate.run_design_review_agent", side_effect=subprocess.TimeoutExpired(cmd="codex", timeout=300)):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc != 0, f"Expected non-zero for timeout in strict mode, got {rc}"
 
@@ -1423,7 +1430,7 @@ def test_verify_design_api_error_advisory_mode(tmp_path, capsys):
     args = _advisory_args()
     codex_fail = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="internal server error: 503")
-    with patch("orchestrate.codex_exec", return_value=codex_fail):
+    with patch("orchestrate.run_design_review_agent", return_value=codex_fail):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc == 0, f"Expected 0 for api-error in advisory mode, got {rc}"
     summary = orchestrate.read_json(art / "summary.json")
@@ -1440,7 +1447,7 @@ def test_verify_design_api_error_strict_mode(tmp_path):
     args = _advisory_args(strict=True)
     codex_fail = subprocess.CompletedProcess(
         args=[], returncode=1, stdout="internal server error: 503")
-    with patch("orchestrate.codex_exec", return_value=codex_fail):
+    with patch("orchestrate.run_design_review_agent", return_value=codex_fail):
         rc = orchestrate.phase_verify_design(tmp_path, art, args)
     assert rc != 0, f"Expected non-zero for api-error in strict mode, got {rc}"
 
@@ -1454,11 +1461,40 @@ def test_verify_design_approved_still_passes(tmp_path, capsys):
         args = _advisory_args(strict=strict)
         codex_ok = subprocess.CompletedProcess(
             args=[], returncode=0, stdout="APPROVED: looks great")
-        with patch("orchestrate.codex_exec", return_value=codex_ok):
+        with patch("orchestrate.run_design_review_agent", return_value=codex_ok):
             rc = orchestrate.phase_verify_design(tmp_path, art, args)
         out = _json.loads(capsys.readouterr().out)
         assert rc == 0
         assert out.get("advisory") is not True, "APPROVED must not set advisory"
+
+
+def test_design_review_flags_default_empty():
+    """Codex retired: design review is opt-in, so the flags default to empty."""
+    args = orchestrate.parse_args(["--phase", "verify-design", "--task", "t"])
+    assert args.design_review_provider == ""
+    assert args.design_review_model == ""
+
+
+def test_verify_design_skipped_by_default_no_reviewer(tmp_path, capsys):
+    """With no GLM reviewer configured, verify-design skips the review and records an
+    advisory pass so implement can proceed — no Codex or agent call happens."""
+    import json as _json
+    art = _make_verify_design_artifact_dir(tmp_path)
+    args = orchestrate.parse_args(["--phase", "verify-design", "--task", "t"])
+    with patch("orchestrate.run_design_review_agent") as mock_review, \
+         patch("orchestrate.codex_exec") as mock_codex:
+        rc = orchestrate.phase_verify_design(tmp_path, art, args)
+    assert rc == 0
+    mock_review.assert_not_called()
+    mock_codex.assert_not_called()
+    summary = orchestrate.read_json(art / "summary.json")
+    phase = summary["phases"]["verify_design"]
+    assert phase["status"] == "success"
+    assert phase.get("advisory") is True
+    assert phase.get("verdict") == "skipped"
+    out = _json.loads(capsys.readouterr().out)
+    assert out["advisory"] is True
+    assert out["status"] == "success"
 
 
 # ---------------------------------------------------------------------------

@@ -36,14 +36,15 @@ def test_explore_uses_qwen_summary_index():
     assert "qwen-summary-index" in content
 
 
-def test_codex_reviews_plan():
+def test_plan_review_present():
+    """Codex retired: the plan is reviewed by Claude into plan-review.md."""
     content = SKILL_PATH.read_text()
-    assert "codex-plan-review.md" in content
+    assert "plan-review.md" in content
 
 
 def test_resume_artifacts_present():
     content = SKILL_PATH.read_text()
-    for artifact in ["intent-summary.md", "design.md", "route-decision.md", "codex-plan-review.md"]:
+    for artifact in ["intent-summary.md", "design.md", "route-decision.md", "plan-review.md"]:
         assert artifact in content, f"Resume artifact '{artifact}' not mentioned in SKILL.md"
 
 

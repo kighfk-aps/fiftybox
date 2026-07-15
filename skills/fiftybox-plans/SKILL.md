@@ -173,23 +173,24 @@ If the phase fails, report the failure and preserve `artifactDir`.
 
 ## Phase 5: Review The Plan
 
-Review the produced plan before publishing it. Prefer Codex CLI from the worktree:
+Review the produced plan before publishing it. Codex is retired, so **Claude reviews the plan directly**: read `<artifactDir>/plan.md` against `<artifactDir>/intent-summary.md`, `<artifactDir>/design.md`, and `<artifactDir>/explore-report.md`, and judge it on missing steps, unsafe assumptions, test adequacy, and whether a separate agent could execute it unaided. Record a first-line verdict (`APPROVED`, `REVISE`, or `BLOCKED`) plus notes to `<artifactDir>/plan-review.md`.
 
-```bash
-codex exec --cd "<worktree>" --sandbox read-only --model gpt-5.4 \
-  "Review <artifactDir>/plan.md against <artifactDir>/intent-summary.md, <artifactDir>/design.md, and <artifactDir>/explore-report.md. First line must be APPROVED, REVISE, or BLOCKED. Focus on missing steps, unsafe assumptions, test adequacy, and whether the plan is executable by a separate agent. Do not implement anything."
-```
-
-Save the review output to `<artifactDir>/codex-plan-review.md`.
-
-Also run the existing design review for resume compatibility:
+Then run verify-design for `--resume` compatibility. For a normal plan, run it without reviewer flags — it records an advisory pass:
 
 ```bash
 python3 <orchestrate.py> --phase verify-design --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --codex-model gpt-5.4
+  --artifact-dir "<artifactDir>"
 ```
 
-If the plan review is `REVISE`, update `<artifactDir>/plan.md` using the review feedback, then run the plan review once more. If it is `BLOCKED`, stop with the failure report and the blocker.
+**Only for a genuinely complex architecture**, add the opt-in GLM design review (Z.AI Coding Plan — `zai-coding` / `glm-5.2`) instead:
+
+```bash
+python3 <orchestrate.py> --phase verify-design --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --design-review-provider zai-coding --design-review-model glm-5.2
+```
+
+If the plan review is `REVISE`, update `<artifactDir>/plan.md` using the review feedback, then review once more. If it is `BLOCKED`, stop with the failure report and the blocker.
 
 ## Phase 6: Save The Markdown Plan
 
@@ -214,7 +215,7 @@ The file must include:
 # <Task Title> Implementation Plan
 
 > Source artifact: <artifactDir>
-> Reviewed: <codex-plan-review.md verdict line>
+> Reviewed: <plan-review.md verdict line>
 
 ## Goal
 ...
@@ -241,7 +242,7 @@ Report only:
 
 - `artifactDir`
 - saved plan path under `plans/`
-- first line of `codex-plan-review.md`
+- first line of `plan-review.md`
 - `/fiftybox-orchestration --resume <artifactDir>` handoff command
 
 Do not start implementation unless the user explicitly asks for the resume handoff.

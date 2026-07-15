@@ -189,7 +189,7 @@ Each agent runs its own Pi CLI instance:
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<specific task description>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2 --skip-verify
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash --skip-verify
 ```
 
 `--skip-verify` is required: fiftybox-execute does design/verification externally
@@ -251,20 +251,22 @@ After all batches pass the Claude Review Gate:
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>"
+  --artifact-dir "<artifactDir>" --skip-codex-review
 ```
 
-On first failure, **automatically retry** the failing task's Phase 5 once with Codex feedback:
+`--skip-codex-review` is required — Codex is retired. Phase 6 gates on the objective test result only; spec compliance was already checked by the Claude Review Gate (Step 6).
+
+On first failure, **automatically retry** the failing task's Phase 5 once with the test failure output as feedback:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<failing task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2 --skip-verify \
-  --is-retry --feedback "<codex feedback>"
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash --skip-verify \
+  --is-retry --feedback "<test failure output>"
 
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase review-test --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --is-retry
+  --artifact-dir "<artifactDir>" --is-retry --skip-codex-review
 ```
 
 On second failure, report and present choices:
@@ -287,7 +289,7 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash
 ```
 
 If the user specified a deploy command, pass `--deploy-command "<command>"`.
@@ -402,7 +404,7 @@ If the user says `/fiftybox-execute deploy` or asks to "just deploy":
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --provider zai-coding --model glm-5.2
+  --artifact-dir "<artifactDir>" --provider opencode-go --model deepseek-v4-flash
 ```
 
 For deploy-only, create a minimal artifact dir and summary.json with `complete.status: "success"` so the deploy phase gate passes.

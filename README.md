@@ -1,17 +1,18 @@
 # fiftybox
 
-> Claude + Codex + Pi CLI orchestration harness — TDD-driven development pipeline in a single `claude plugins install`.
+> Claude + Pi CLI orchestration harness — TDD-driven development pipeline in a single `claude plugins install`.
 
-Fiftybox wires three AI agents into a focused development pipeline:
+Fiftybox wires AI agents into a focused development pipeline:
 
-- **Claude Code** — orchestrates the full lifecycle
-- **Pi CLI** — explores the codebase and implements changes
-- **Codex CLI** — verifies design and reviews code
+- **Claude Code** — orchestrates the full lifecycle and reviews every change
+- **Pi CLI** — explores the codebase and implements changes (default: opencode-go / `deepseek-v4-flash`)
 
-Invoke `/orchestrate "task"` and fiftybox drives everything: explore → clarify → design → implement → review → commit → push.
+Invoke `/fiftybox-orchestration "task"` and fiftybox drives everything: explore → clarify → design → implement → review → commit → push.
+
+> **Codex retired (2026-07).** Design/implementation reviews no longer shell out to Codex. The Claude Review Gate is the primary quality check; a design review is skipped by default and only runs on GLM (Z.AI Coding Plan — `zai-coding` / `glm-5.2`) when an architecture is genuinely complex.
 
 **Why fiftybox instead of [metaswarm](https://github.com/dsifry/metaswarm)?**
-Metaswarm is powerful but complex (18 agents, 9 phases). Fiftybox is opinionated and lightweight — Pi CLI is the implementation engine, Codex is the reviewer, Claude is the conductor. Three tools, one command.
+Metaswarm is powerful but complex (18 agents, 9 phases). Fiftybox is opinionated and lightweight — Pi CLI is the implementation engine, Claude is the conductor and reviewer. Two tools, one command.
 
 ---
 
@@ -21,13 +22,11 @@ Metaswarm is powerful but complex (18 agents, 9 phases). Fiftybox is opinionated
 |------|---------|-------|
 | Claude Code | [claude.ai/code](https://claude.ai/code) | `claude --version` |
 | Pi CLI | [pi.ai/cli](https://pi.ai/cli) | `pi --version` |
-| Codex CLI | `npm i -g @openai/codex` | `codex --version` |
 
 Claude Code plugins required:
 
 ```bash
 claude plugins install superpowers@claude-plugins-official
-claude plugins install codex@openai-codex
 ```
 
 ---
@@ -42,15 +41,15 @@ claude plugins install github:kighfk-aps/fiftybox
 
 Claude Code handles the rest — no cloning needed.
 
-### Option 2 — Paste into Claude or Codex chat
+### Option 2 — Paste into Claude chat
 
-Copy and paste this into any Claude Code or Codex session:
+Copy and paste this into any Claude Code session:
 
 ```
 Install the fiftybox harness: https://github.com/kighfk-aps/fiftybox
 ```
 
-Claude/Codex will clone the repo and run `install.sh` automatically.
+Claude will clone the repo and run `install.sh` automatically.
 
 ### Option 3 — Manual
 
@@ -64,15 +63,16 @@ cd fiftybox && ./install.sh
 ## Usage
 
 ```bash
-/orchestrate "add JWT authentication to the API"
+/fiftybox-orchestration "add JWT authentication to the API"
 ```
 
 ### Flags
 
 | Flag | Description |
 |------|-------------|
-| `--skip-verify` | Skip the Design phase (Codex verification). Use when design is already done and you only need implementation (`/pi-execute`). |
-| `--strict-review` | Restore hard-gating on Codex verdicts (Phase 4 design verify + Phase 6 code review). Default: advisory — REJECTED/UNCLEAR is recorded and surfaced but does not stop the pipeline. Test failures always block. |
+| `--skip-verify` | Skip the design-verify dependency for implement. Use when design is already done and you only need implementation (`/fiftybox-execute`). |
+| `--design-review-provider` / `--design-review-model` | Opt-in GLM design review for a very complex architecture (e.g. `zai-coding` / `glm-5.2`). Omit to skip the design review entirely. |
+| `--strict-review` | Restore hard-gating on review verdicts (Phase 4 design verify). Default: advisory — REJECTED/UNCLEAR is recorded and surfaced but does not stop the pipeline. Test failures always block. |
 
 ---
 
@@ -82,11 +82,12 @@ cd fiftybox && ./install.sh
 |-------|-------|-------------|
 | 0 Setup | Claude | Creates isolated git worktree + artifact dir |
 | 1 Explore | explore_agent (default: Pi) | Maps codebase, identifies relevant files |
-| 2 Clarify | Claude | Confirms intent with user if ambiguous |
-| 3 Design | Codex (advisory) | Verifies architecture, flags risks |
+| 2 Clarify | Claude (Opus) | Confirms intent with user if ambiguous |
+| 3 Design | Claude (Opus) | Writes architecture + plan; review skipped by default (GLM opt-in for complex work) |
 | 4 Test | Claude | Writes failing tests (Red) |
-| 5 Implement | implement_agent (default: Pi) | Implements to pass tests (Green) |
-| 6 Review | Codex (advisory) + tests (blocking) | Reviews code, runs tests |
+| 5 Implement | implement_agent (default: Pi / opencode-go / deepseek-v4-flash) | Implements to pass tests (Green) |
+| 5.5 Review Gate | Claude | Primary quality check: tests, spec compliance, integration |
+| 6 Review | tests (blocking) | Runs tests; no LLM review (Codex retired) |
 | 7 Commit | Claude | Commits → merges → pushes |
 
 ---
@@ -100,7 +101,7 @@ To switch agents, run:
 ./configure.sh
 ```
 
-Or edit `~/.claude/skills/orchestrate/config.json` directly.
+Or edit `~/.claude/skills/fiftybox-orchestration/config.json` directly.
 
 Supported built-in agents: `pi`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`
 
