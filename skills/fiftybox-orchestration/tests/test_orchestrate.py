@@ -1608,3 +1608,124 @@ def test_strict_review_flag_defaults_false():
     """--strict-review must default to False."""
     args = orchestrate.parse_args(["--phase", "verify-design", "--task", "t"])
     assert args.strict_review is False
+
+
+# ---------------------------------------------------------------------------
+# pending_files — what phase_complete must stage
+#
+# Regression: the complete phase used to stage only
+# summary["phases"]["implement"]["changedFiles"]. That record is overwritten by
+# every implement invocation and holds just that run's delta, so a file created
+# by an earlier run stayed untracked and was silently dropped from the commit.
+# Tracked files survived because they keep showing up in `git diff`; new files
+# did not. See the fiftybox-free-execute run, where SKILL.md and the whole
+# skills/fiftybox-free-execute/ tree were pushed-around rather than pushed.
+# ---------------------------------------------------------------------------
+
+def _init_repo(path: Path) -> None:
+    """Create a git repo with one committed file."""
+    subprocess.run(["git", "init", "-q"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=path, check=True)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=path, check=True)
+    (path / "tracked.txt").write_text("original\n")
+    subprocess.run(["git", "add", "tracked.txt"], cwd=path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=path, check=True)
+
+
+def test_pending_files_includes_untracked_new_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "brand_new.py").write_text("x = 1\n")
+        assert "brand_new.py" in orchestrate.pending_files(root)
+
+
+def test_pending_files_includes_untracked_file_in_new_directory():
+    """The dropped files lived in a directory that did not exist at HEAD."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "skills" / "new-skill" / "scripts").mkdir(parents=True)
+        (root / "skills" / "new-skill" / "SKILL.md").write_text("---\n")
+        (root / "skills" / "new-skill" / "scripts" / "run.py").write_text("pass\n")
+        result = orchestrate.pending_files(root)
+        assert "skills/new-skill/SKILL.md" in result
+        assert "skills/new-skill/scripts/run.py" in result
+
+
+def test_pending_files_includes_modified_tracked_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "tracked.txt").write_text("changed\n")
+        assert "tracked.txt" in orchestrate.pending_files(root)
+
+
+def test_pending_files_includes_staged_changes():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "staged.txt").write_text("new\n")
+        subprocess.run(["git", "add", "staged.txt"], cwd=root, check=True)
+        assert "staged.txt" in orchestrate.pending_files(root)
+
+
+def test_pending_files_includes_deleted_tracked_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "tracked.txt").unlink()
+        assert "tracked.txt" in orchestrate.pending_files(root)
+
+
+def test_pending_files_excludes_gitignored_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / ".gitignore").write_text("secrets/\n*.log\n")
+        (root / "secrets").mkdir()
+        (root / "secrets" / "key.txt").write_text("shh\n")
+        (root / "debug.log").write_text("noise\n")
+        result = orchestrate.pending_files(root)
+        assert "secrets/key.txt" not in result
+        assert "debug.log" not in result
+        assert ".gitignore" in result
+
+
+def test_pending_files_returns_empty_for_clean_worktree():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        assert orchestrate.pending_files(root) == []
+
+
+def test_pending_files_is_sorted_and_deduplicated():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        (root / "b.txt").write_text("b\n")
+        (root / "a.txt").write_text("a\n")
+        (root / "tracked.txt").write_text("changed\n")
+        subprocess.run(["git", "add", "a.txt"], cwd=root, check=True)
+        result = orchestrate.pending_files(root)
+        assert result == sorted(result)
+        assert len(result) == len(set(result))
+
+
+def test_pending_files_survives_a_stale_implement_record():
+    """The exact failure: an earlier run's new file plus a later run's edit."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _init_repo(root)
+        # Run 1 created a new file (recorded, then the record was overwritten)
+        (root / "skills" / "free-execute").mkdir(parents=True)
+        (root / "skills" / "free-execute" / "SKILL.md").write_text("---\n")
+        # Run 2 only edited a tracked file, and its record is what complete reads
+        (root / "tracked.txt").write_text("edited by run 2\n")
+        stale_record = ["tracked.txt"]
+        result = orchestrate.pending_files(root)
+        assert "skills/free-execute/SKILL.md" in result, (
+            "the file from run 1 must still be staged even though the last "
+            "implement record does not mention it"
+        )
+        assert set(stale_record).issubset(set(result))

@@ -900,6 +900,23 @@ def changed_files(root: Path, before_files: set[str] | None = None) -> list[str]
     return sorted(set(changed + cached + untracked))
 
 
+def pending_files(root: Path) -> list[str]:
+    """Every path in the worktree that differs from HEAD, new files included.
+
+    phase_complete cannot derive this from the implement phase record: that
+    record is overwritten by each implement invocation and holds only that
+    run's delta. A file created by an earlier run stays untracked, so it is
+    invisible to `git diff` and vanishes from the record the next run writes —
+    which is how a commit can land referencing files it never contained.
+    Files written before the first implement run are missed the same way.
+    """
+    diff_result = run(["git", "diff", "--name-only", "HEAD"], root)
+    tracked = [line for line in diff_result.stdout.splitlines() if line] if diff_result.returncode == 0 else []
+    untracked_result = run(["git", "ls-files", "--others", "--exclude-standard"], root)
+    untracked = [line for line in untracked_result.stdout.splitlines() if line] if untracked_result.returncode == 0 else []
+    return sorted(set(tracked + untracked))
+
+
 def read_untracked_files(root: Path, paths: list[str], limit: int = 2000) -> str:
     sections: list[str] = []
     remaining = limit
@@ -2562,11 +2579,11 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
 )
         return 0
 
-    impl_phase = summary.get("phases", {}).get("implement", {})
-    staging_files = impl_phase.get("changedFiles", [])
-    if not staging_files:
-        staging_files = changed_files(worktree)
-    staging_files = filter_sensitive_files(staging_files)
+    # Stage from the worktree's actual state, not the implement phase record.
+    # That record only covers the last implement invocation, so anything an
+    # earlier run created — or anything written before the first run — would be
+    # left behind while the commit still referenced it.
+    staging_files = filter_sensitive_files(pending_files(worktree))
     if not staging_files:
         err = "No files to stage after filtering sensitive files"
         logger.log(err)
