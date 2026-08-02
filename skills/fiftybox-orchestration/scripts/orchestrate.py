@@ -2618,6 +2618,26 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
         write_json(artifact_dir / "summary.json", summary)
         return fail_json(phase="complete", error=f"git commit failed: {commit_result.stdout}", artifact_dir=artifact_dir, exit_code=commit_result.returncode)
 
+    # Refuse to merge or push a commit that did not capture the whole worktree.
+    # A partial commit that reports success is worse than a failure: it lands a
+    # main that references files it never contained. Sensitive files are
+    # excluded from staging deliberately, so they must not trip this.
+    leftover = filter_sensitive_files(pending_files(worktree))
+    if leftover:
+        shown = ", ".join(leftover[:20])
+        if len(leftover) > 20:
+            shown += f" (+{len(leftover) - 20} more)"
+        err = (
+            "incomplete_commit: files are still pending after the commit, so merge "
+            f"and push were skipped. The work is preserved on branch {branch}. "
+            f"Still pending: {shown}"
+        )
+        logger.log(err)
+        logger.finish(1, "failed")
+        summary["phases"]["complete"] = phase_record("incomplete_commit", logger, leftoverFiles=leftover)
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="complete", error=err, artifact_dir=artifact_dir)
+
     hash_result = run(["git", "rev-parse", "HEAD"], worktree)
     commit_hash = hash_result.stdout.strip() if hash_result.returncode == 0 else "unknown"
     merge_worktree = root / ".worktrees" / f"orchestrate-merge-{artifact_dir.name}"

@@ -1,3 +1,4 @@
+import json
 import subprocess
 import tempfile
 from unittest.mock import patch
@@ -1729,3 +1730,129 @@ def test_pending_files_survives_a_stale_implement_record():
             "implement record does not mention it"
         )
         assert set(stale_record).issubset(set(result))
+
+
+# ---------------------------------------------------------------------------
+# incomplete_commit guard
+#
+# Staging from the worktree fixes the known way files got dropped, but a drop
+# that reports success is the part that actually hurt: main was pushed
+# referencing a directory the commit never contained. The guard turns any
+# future leftover into a failure before merge and push, not after.
+# ---------------------------------------------------------------------------
+
+def _sandbox_repo(base: Path) -> tuple[Path, Path, Path]:
+    """Build origin.git + clone + a feature worktree. Returns (root, worktree, artifact_dir)."""
+    subprocess.run(["git", "init", "-q", "--bare", str(base / "origin.git")], check=True)
+    root = base / "root"
+    subprocess.run(["git", "clone", "-q", str(base / "origin.git"), str(root)], check=True)
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t")):
+        subprocess.run(["git", "config", key, value], cwd=root, check=True)
+    (root / "tracked.txt").write_text("base\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+    subprocess.run(["git", "branch", "-M", "main"], cwd=root, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=root, check=True)
+
+    worktree = root / ".worktrees" / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "feature/sim", str(worktree), "main"],
+        cwd=root, check=True,
+    )
+    artifact_dir = root / "art"
+    (artifact_dir / "logs").mkdir(parents=True)
+    (artifact_dir / "summary.json").write_text(json.dumps({
+        "worktree": str(worktree),
+        "branch": "feature/sim",
+        "artifactDir": str(artifact_dir),
+        "phases": {
+            "setup": {"status": "success"},
+            "implement": {"status": "success", "changedFiles": ["tracked.txt"]},
+            "review_test": {"status": "success", "testCommand": "true"},
+        },
+        "finalStatus": "in_progress",
+    }))
+    return root, worktree, artifact_dir
+
+
+def _complete_args():
+    ns = orchestrate.parse_args(["--phase", "complete", "--task", "sim"])
+    ns.dry_run = False
+    return ns
+
+
+def test_complete_commits_files_from_earlier_implement_runs():
+    """The original failure: a stale implement record must not shrink the commit."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "skills" / "new-skill").mkdir(parents=True)
+        (worktree / "skills" / "new-skill" / "SKILL.md").write_text("---\n")
+        (worktree / "tracked.txt").write_text("edited\n")
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc == 0
+
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "origin/main"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert "skills/new-skill/SKILL.md" in listed
+        assert "tracked.txt" in listed
+
+
+def test_complete_leaves_no_pending_files_behind():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "new.py").write_text("x = 1\n")
+
+        assert orchestrate.phase_complete(root, artifact_dir, _complete_args()) == 0
+        assert orchestrate.pending_files(worktree) == []
+
+
+def test_complete_fails_and_skips_push_when_files_remain():
+    """If anything is still pending after the commit, stop before merge/push."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "new.py").write_text("x = 1\n")
+        before = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+        real_pending = orchestrate.pending_files
+        calls = {"n": 0}
+
+        def flaky_pending(path):
+            calls["n"] += 1
+            # First call stages; the post-commit call reports a straggler.
+            return real_pending(path) if calls["n"] == 1 else ["ghost.py"]
+
+        with patch("orchestrate.pending_files", side_effect=flaky_pending):
+            rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+
+        assert rc != 0, "leftover files must fail the phase"
+        after = subprocess.run(
+            ["git", "rev-parse", "origin/main"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        assert after == before, "origin/main must not move when the commit is incomplete"
+
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["status"] == "incomplete_commit"
+        assert "ghost.py" in summary["phases"]["complete"]["leftoverFiles"]
+
+
+def test_complete_guard_ignores_sensitive_files_left_pending():
+    """Sensitive files are excluded from staging on purpose, so they must not trip the guard."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "new.py").write_text("x = 1\n")
+        (worktree / ".env").write_text("SECRET=1\n")
+
+        assert orchestrate.phase_complete(root, artifact_dir, _complete_args()) == 0
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "origin/main"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert ".env" not in listed
+        assert "new.py" in listed
