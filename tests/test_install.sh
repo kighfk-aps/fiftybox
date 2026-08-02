@@ -212,6 +212,45 @@ else
 fi
 
 # ---------------------------------------------------------------------------
+# install.sh survives a checkout without the gitignored local-model skills
+#
+# skills/fiftybox-local*/ and commands/fiftybox-local*.md are gitignored, so a
+# clean clone or an orchestrate worktree does not have them. install.sh used to
+# cp them unconditionally and die under `set -e`, which meant install.sh could
+# never run anywhere except a working tree that happened to still have them.
+# ---------------------------------------------------------------------------
+
+BARE_SRC="$(mktemp -d)"
+cp -R "$SCRIPT_DIR/." "$BARE_SRC/"
+rm -rf "$BARE_SRC/skills/fiftybox-local" \
+       "$BARE_SRC/skills/fiftybox-local-execute" \
+       "$BARE_SRC/commands/fiftybox-local.md" \
+       "$BARE_SRC/commands/fiftybox-local-execute.md"
+
+BARE_HOME="$(mktemp -d)"
+if HOME="$BARE_HOME" bash "$BARE_SRC/install.sh" >/dev/null 2>&1; then
+    pass "install.sh succeeds without the gitignored local-model skills"
+else
+    fail "install.sh failed on a checkout lacking skills/fiftybox-local*"
+fi
+
+[[ -f "$BARE_HOME/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py" ]] \
+    && pass "orchestrate.py still installed without local-model skills" \
+    || fail "orchestrate.py missing when local-model skills absent"
+
+[[ -f "$BARE_HOME/.claude/skills/fiftybox-free-execute/SKILL.md" ]] \
+    && pass "fiftybox-free-execute still installed without local-model skills" \
+    || fail "fiftybox-free-execute missing when local-model skills absent"
+
+[[ -f "$BARE_HOME/.claude/commands/fiftybox-execute.md" ]] \
+    && pass "slash commands still installed without local-model skills" \
+    || fail "slash commands missing when local-model skills absent"
+
+[[ ! -e "$BARE_HOME/.claude/skills/fiftybox-local" ]] \
+    && pass "absent local-model skill is not installed" \
+    || fail "fiftybox-local installed from a source that lacks it"
+
+# ---------------------------------------------------------------------------
 # Summary
 # ---------------------------------------------------------------------------
 echo ""
