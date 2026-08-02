@@ -7,7 +7,8 @@
               "--no-session", "--no-context-files", "--append-system-prompt", "{prompt}", "{task}"]
     },
     "opencode": {
-      "cmd": ["opencode", "run", "--model", "{model}", "--print", "{prompt}\n{task}"]
+      "cmd": ["opencode", "run", "--model", "{model}",
+              "--dangerously-skip-permissions", "{prompt}\n{task}"]
     },
     "aider": {
       "cmd": ["aider", "--message", "{prompt}\n{task}", "--yes-always", "--no-git"]

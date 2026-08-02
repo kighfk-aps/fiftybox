@@ -1,6 +1,7 @@
 """Tests for BUILTIN_AGENTS, load_agent_config, and build_agent_cmd."""
 from __future__ import annotations
 
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -338,3 +339,119 @@ class TestPhaseExploreAgentError:
         result = orc.phase_explore(tmp_path, artifact_dir, args)
         assert isinstance(result, int)
         assert result != 0
+
+
+# ---------------------------------------------------------------------------
+# resolve_agent_config / --implement-agent
+# ---------------------------------------------------------------------------
+
+class TestResolveAgentConfig:
+    """--implement-agent overrides config.json for a single orchestrate call."""
+
+    def _args(self, implement_agent=""):
+        return argparse.Namespace(implement_agent=implement_agent)
+
+    def test_no_override_keeps_config_value(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"implement_agent": "aider"}), encoding="utf-8"
+        )
+        config = orc.resolve_agent_config(tmp_path, self._args())
+        assert config["implement_agent"] == "aider"
+
+    def test_no_override_keeps_pi_default_when_no_config(self, tmp_path):
+        config = orc.resolve_agent_config(tmp_path, self._args())
+        assert config["implement_agent"] == "pi"
+
+    def test_override_replaces_config_value(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"implement_agent": "aider"}), encoding="utf-8"
+        )
+        config = orc.resolve_agent_config(tmp_path, self._args("opencode"))
+        assert config["implement_agent"] == "opencode"
+
+    def test_override_does_not_touch_explore_agent(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"explore_agent": "gemini", "implement_agent": "aider"}),
+            encoding="utf-8",
+        )
+        config = orc.resolve_agent_config(tmp_path, self._args("opencode"))
+        assert config["explore_agent"] == "gemini"
+
+    def test_empty_string_override_is_ignored(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"implement_agent": "aider"}), encoding="utf-8"
+        )
+        assert orc.resolve_agent_config(tmp_path, self._args(""))["implement_agent"] == "aider"
+
+    def test_missing_attribute_is_treated_as_no_override(self, tmp_path):
+        (tmp_path / "config.json").write_text(
+            json.dumps({"implement_agent": "aider"}), encoding="utf-8"
+        )
+        config = orc.resolve_agent_config(tmp_path, argparse.Namespace())
+        assert config["implement_agent"] == "aider"
+
+    def test_agents_dict_is_preserved(self, tmp_path):
+        config = orc.resolve_agent_config(tmp_path, self._args("opencode"))
+        assert "opencode" in config["agents"]
+        assert "pi" in config["agents"]
+
+    def test_unknown_override_name_survives_to_validation(self, tmp_path):
+        """resolve_ does not validate; phase_setup reports the unknown name."""
+        config = orc.resolve_agent_config(tmp_path, self._args("nope"))
+        assert config["implement_agent"] == "nope"
+        with pytest.raises(ValueError, match="Unknown agent 'nope'"):
+            orc.build_agent_cmd(
+                "nope", config, prompt="p", task="t",
+                model="m", provider="pr", adapters_dir=tmp_path,
+            )
+
+
+class TestImplementAgentArg:
+    def test_defaults_to_empty_string(self):
+        args = orc.parse_args(["--phase", "setup", "--task", "t"])
+        assert args.implement_agent == ""
+
+    def test_accepts_value(self):
+        args = orc.parse_args(
+            ["--phase", "implement", "--task", "t", "--implement-agent", "opencode"]
+        )
+        assert args.implement_agent == "opencode"
+
+
+# ---------------------------------------------------------------------------
+# opencode adapter command shape
+# ---------------------------------------------------------------------------
+
+class TestOpencodeAdapter:
+    def test_opencode_cmd_has_no_print_flag(self):
+        """opencode run has no --print; it would fail immediately."""
+        assert "--print" not in orc.BUILTIN_AGENTS["opencode"]["cmd"]
+
+    def test_opencode_cmd_skips_permissions(self):
+        """Non-interactive runs cannot approve edits, so the flag is required."""
+        assert "--dangerously-skip-permissions" in orc.BUILTIN_AGENTS["opencode"]["cmd"]
+
+    def test_opencode_cmd_passes_model(self):
+        cmd = orc.BUILTIN_AGENTS["opencode"]["cmd"]
+        assert cmd[:2] == ["opencode", "run"]
+        assert "--model" in cmd
+        assert cmd[cmd.index("--model") + 1] == "{model}"
+
+    def test_opencode_cmd_substitutes_model(self, tmp_path):
+        config = {"agents": dict(orc.BUILTIN_AGENTS)}
+        cmd = orc.build_agent_cmd(
+            "opencode", config, prompt="PROMPT", task="TASK",
+            model="opencode/mimo-v2.5-free", provider="unused", adapters_dir=tmp_path,
+        )
+        assert cmd[cmd.index("--model") + 1] == "opencode/mimo-v2.5-free"
+        assert "--print" not in cmd
+        assert "--dangerously-skip-permissions" in cmd
+        assert any("PROMPT" in token and "TASK" in token for token in cmd)
+
+    def test_config_example_matches_builtin(self):
+        """config.example.json must not ship the broken --print form."""
+        example = Path(__file__).parent.parent / "config.example.json"
+        raw = json.loads(example.read_text(encoding="utf-8"))
+        cmd = raw["agents"]["opencode"]["cmd"]
+        assert "--print" not in cmd
+        assert "--dangerously-skip-permissions" in cmd

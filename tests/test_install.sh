@@ -18,6 +18,7 @@ SKILLS_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-orchestration"
 PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
 LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
+FREE_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-free-execute"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
@@ -73,6 +74,18 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$COMMANDS_DIR/fiftybox-execute.md" ]] \
     && pass "fiftybox-execute.md command installed" \
     || fail "fiftybox-execute.md command not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-free-execute.md" ]] \
+    && pass "fiftybox-free-execute.md command installed" \
+    || fail "fiftybox-free-execute.md command not installed"
+
+[[ -f "$FREE_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+    && pass "fiftybox-free-execute SKILL.md installed" \
+    || fail "fiftybox-free-execute SKILL.md not installed"
+
+[[ -f "$FREE_EXECUTE_SKILL_DIR/scripts/discover_free_models.py" ]] \
+    && pass "discover_free_models.py installed" \
+    || fail "discover_free_models.py not installed"
 
 [[ -f "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md" ]] \
     && pass "Codex fiftybox-plans skill installed" \

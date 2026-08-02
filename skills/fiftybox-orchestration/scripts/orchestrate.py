@@ -79,7 +79,8 @@ SKILL_DIR = Path.home() / ".claude" / "skills" / "orchestrate"
 BUILTIN_AGENTS: dict[str, dict] = {
     "pi": {"cmd": ["pi", "--print", "--provider", "{provider}", "--model", "{model}",
                    "--no-session", "--no-context-files", "--append-system-prompt", "{prompt}", "{task}"]},
-    "opencode": {"cmd": ["opencode", "run", "--model", "{model}", "--print", "{prompt}\n{task}"]},
+    "opencode": {"cmd": ["opencode", "run", "--model", "{model}",
+                         "--dangerously-skip-permissions", "{prompt}\n{task}"]},
     "aider": {"cmd": ["aider", "--message", "{prompt}\n{task}", "--yes-always", "--no-git"]},
     "gemini": {"cmd": ["gemini", "-p", "{prompt}\n{task}"]},
     "qwen": {"cmd": ["qwen-code", "--model", "{model}", "--message", "{prompt}\n{task}"]},
@@ -164,6 +165,21 @@ def load_agent_config(skill_dir: Path) -> dict[str, Any]:
         }
     except (json.JSONDecodeError, ValueError, TypeError) as exc:
         return {**defaults, "_config_error": str(exc)}
+
+
+def resolve_agent_config(skill_dir: Path, args: argparse.Namespace) -> dict[str, Any]:
+    """Load config.json, then apply per-invocation agent overrides.
+
+    `--implement-agent` lets one skill run a different implementer without
+    mutating the shared config.json, which other sessions read concurrently.
+    Validation stays in phase_setup: an unknown name must fail there with the
+    existing message, not silently here.
+    """
+    config = load_agent_config(skill_dir)
+    override = (getattr(args, "implement_agent", "") or "").strip()
+    if override:
+        return {**config, "implement_agent": override}
+    return config
 
 
 def build_agent_cmd(agent_name: str, config: dict, *, prompt: str, task: str, model: str, provider: str, adapters_dir: Path) -> list[str]:
@@ -1147,7 +1163,7 @@ def phase_setup(root: Path, args: argparse.Namespace) -> int:
         logger.log("[DRY RUN] Skipping prerequisite command checks")
 
     # Agent config validation
-    agent_config = load_agent_config(SKILL_DIR)
+    agent_config = resolve_agent_config(SKILL_DIR, args)
     if "_config_error" in agent_config:
         logger.log(f"[CONFIG WARNING] Malformed config.json: {agent_config['_config_error']} — falling back to Pi defaults")
     configured_agents = {agent_config["explore_agent"], agent_config["implement_agent"]}
@@ -1281,7 +1297,7 @@ def phase_explore(root: Path, artifact_dir: Path, args: argparse.Namespace) -> i
         "3) dependency graph between modules, 4) code patterns and conventions, "
         f"5) areas most relevant to this task: {args.task}"
     )
-    agent_config = load_agent_config(SKILL_DIR)
+    agent_config = resolve_agent_config(SKILL_DIR, args)
     adapters_dir = SKILL_DIR / "adapters"
     agent_name = agent_config["explore_agent"]
     # Always include a no-edit instruction in the task regardless of which agent is configured.
@@ -2165,7 +2181,7 @@ def phase_implement(root: Path, artifact_dir: Path, args: argparse.Namespace) ->
     logger = PhaseLogger(artifact_dir, 6, "implement", is_retry=is_retry)
     design_path = artifact_dir / "design.md"
     intent_path = artifact_dir / "intent-summary.md"
-    agent_config_pre = load_agent_config(SKILL_DIR)
+    agent_config_pre = resolve_agent_config(SKILL_DIR, args)
     logger.start(cmd=f"{agent_config_pre['implement_agent']} [implement] model={args.model}", cwd=str(worktree))
 
     if not design_path.exists():
@@ -2644,7 +2660,7 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
 def phase_pi_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
-    _pic_agent = load_agent_config(SKILL_DIR)["implement_agent"]
+    _pic_agent = resolve_agent_config(SKILL_DIR, args)["implement_agent"]
     logger = PhaseLogger(artifact_dir, 8, "pi-complete")
     logger.start(cmd=f"{_pic_agent} [pi-complete] model={args.model}", cwd=str(worktree))
 
@@ -2703,7 +2719,7 @@ Then provide:
 - branch pushed
 - any remaining warnings
 """
-    agent_config = load_agent_config(SKILL_DIR)
+    agent_config = resolve_agent_config(SKILL_DIR, args)
     adapters_dir = SKILL_DIR / "adapters"
     agent_name = agent_config["implement_agent"]
     try:
@@ -2795,7 +2811,7 @@ Then provide:
 def phase_pi_deploy(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
-    _pid_agent = load_agent_config(SKILL_DIR)["implement_agent"]
+    _pid_agent = resolve_agent_config(SKILL_DIR, args)["implement_agent"]
     logger = PhaseLogger(artifact_dir, 9, "pi-deploy")
     logger.start(cmd=f"{_pid_agent} [pi-deploy] model={args.model}", cwd=str(worktree))
 
@@ -2848,7 +2864,7 @@ Then provide:
 - evidence of success or failure
 - any follow-up checks the operator should run
 """
-    agent_config = load_agent_config(SKILL_DIR)
+    agent_config = resolve_agent_config(SKILL_DIR, args)
     adapters_dir = SKILL_DIR / "adapters"
     agent_name = agent_config["implement_agent"]
     try:
@@ -2910,7 +2926,7 @@ def phase_deploy(root: Path, artifact_dir: Path, args: argparse.Namespace) -> in
     """
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
-    _deploy_agent = load_agent_config(SKILL_DIR)["implement_agent"]
+    _deploy_agent = resolve_agent_config(SKILL_DIR, args)["implement_agent"]
     logger = PhaseLogger(artifact_dir, 9, "deploy")
     logger.start(cmd=f"{_deploy_agent} [deploy] model={args.model}", cwd=str(worktree))
 
@@ -2963,7 +2979,7 @@ Then provide:
 - evidence of success or failure
 - any follow-up checks the operator should run
 """
-    agent_config = load_agent_config(SKILL_DIR)
+    agent_config = resolve_agent_config(SKILL_DIR, args)
     adapters_dir = SKILL_DIR / "adapters"
     agent_name = agent_config["implement_agent"]
     try:
@@ -3103,6 +3119,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--task", required=True)
     parser.add_argument("--artifact-dir", help="Existing artifact dir for phases after setup")
     parser.add_argument("--provider", default="opencode-go")
+    parser.add_argument(
+        "--implement-agent",
+        default="",
+        help="Override config.json's implement_agent for this invocation only "
+        "(e.g. opencode). Empty (default) uses the configured agent.",
+    )
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument(
         "--explore-model",
