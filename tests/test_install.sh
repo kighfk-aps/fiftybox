@@ -95,49 +95,70 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "Claude fiftybox-plans skill installed" \
     || fail "Claude fiftybox-plans skill not installed"
 
-[[ -f "$LOCAL_SKILL_DIR/SKILL.md" ]] \
-    && pass "Claude fiftybox-local skill installed" \
-    || fail "Claude fiftybox-local skill not installed"
+# The local-model skills are gitignored, so they are only present in a working
+# tree that still has them. Assert they install when the source has them, and
+# that they are absent when it does not — never that they must exist.
+if [[ -f "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" ]]; then
+    [[ -f "$LOCAL_SKILL_DIR/SKILL.md" ]] \
+        && pass "Claude fiftybox-local skill installed" \
+        || fail "Claude fiftybox-local skill not installed"
 
-[[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
-    && pass "Claude fiftybox-local-execute skill installed" \
-    || fail "Claude fiftybox-local-execute skill not installed"
+    [[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
+        && pass "fiftybox-local select_remote_model.sh installed executable" \
+        || fail "fiftybox-local select_remote_model.sh missing or not executable"
 
-[[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
-    && pass "fiftybox-local select_remote_model.sh installed executable" \
-    || fail "fiftybox-local select_remote_model.sh missing or not executable"
+    [[ -x "$LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
+        && pass "fiftybox-local stop_remote_model.sh installed executable" \
+        || fail "fiftybox-local stop_remote_model.sh missing or not executable"
 
-[[ -x "$LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
-    && pass "fiftybox-local stop_remote_model.sh installed executable" \
-    || fail "fiftybox-local stop_remote_model.sh missing or not executable"
+    [[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
+        && pass "Codex fiftybox-local skill installed" \
+        || fail "Codex fiftybox-local skill not installed"
 
-[[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
-    && pass "Codex fiftybox-local skill installed" \
-    || fail "Codex fiftybox-local skill not installed"
+    [[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
+        && pass "Codex fiftybox-local select_remote_model.sh installed executable" \
+        || fail "Codex fiftybox-local select_remote_model.sh missing or not executable"
 
-[[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
-    && pass "Codex fiftybox-local select_remote_model.sh installed executable" \
-    || fail "Codex fiftybox-local select_remote_model.sh missing or not executable"
+    [[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
+        && pass "Codex fiftybox-local stop_remote_model.sh installed executable" \
+        || fail "Codex fiftybox-local stop_remote_model.sh missing or not executable"
 
-[[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
-    && pass "Codex fiftybox-local stop_remote_model.sh installed executable" \
-    || fail "Codex fiftybox-local stop_remote_model.sh missing or not executable"
+    [[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
+        && pass "Codex fiftybox-local OpenAI metadata installed" \
+        || fail "Codex fiftybox-local OpenAI metadata not installed"
+else
+    [[ ! -e "$LOCAL_SKILL_DIR" ]] \
+        && pass "fiftybox-local absent from source and not installed" \
+        || fail "fiftybox-local installed although the source lacks it"
+fi
 
-[[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
-    && pass "Codex fiftybox-local OpenAI metadata installed" \
-    || fail "Codex fiftybox-local OpenAI metadata not installed"
+if [[ -f "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" ]]; then
+    [[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+        && pass "Claude fiftybox-local-execute skill installed" \
+        || fail "Claude fiftybox-local-execute skill not installed"
 
-[[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
-    && pass "Codex fiftybox-local-execute skill installed" \
-    || fail "Codex fiftybox-local-execute skill not installed"
+    [[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+        && pass "Codex fiftybox-local-execute skill installed" \
+        || fail "Codex fiftybox-local-execute skill not installed"
 
-[[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents/openai.yaml" ]] \
-    && pass "Codex fiftybox-local-execute OpenAI metadata installed" \
-    || fail "Codex fiftybox-local-execute OpenAI metadata not installed"
+    [[ -f "$CODEX_LOCAL_EXECUTE_SKILL_DIR/agents/openai.yaml" ]] \
+        && pass "Codex fiftybox-local-execute OpenAI metadata installed" \
+        || fail "Codex fiftybox-local-execute OpenAI metadata not installed"
+else
+    [[ ! -e "$LOCAL_EXECUTE_SKILL_DIR" ]] \
+        && pass "fiftybox-local-execute absent from source and not installed" \
+        || fail "fiftybox-local-execute installed although the source lacks it"
+fi
 
-[[ -f "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
-    && pass "fiftybox-local-execute.md command installed" \
-    || fail "fiftybox-local-execute.md command not installed"
+if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-execute.md" ]]; then
+    [[ -f "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
+        && pass "fiftybox-local-execute.md command installed" \
+        || fail "fiftybox-local-execute.md command not installed"
+else
+    [[ ! -e "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
+        && pass "fiftybox-local-execute.md absent from source and not installed" \
+        || fail "fiftybox-local-execute.md installed although the source lacks it"
+fi
 
 # ---------------------------------------------------------------------------
 # configure.sh: sets agents
