@@ -20,9 +20,28 @@ import orchestrate as orc  # noqa: E402
 # ---------------------------------------------------------------------------
 
 class TestBuiltinAgents:
-    def test_all_six_agents_present(self):
-        expected = {"pi", "opencode", "aider", "gemini", "qwen", "cursor"}
+    def test_all_seven_agents_present(self):
+        expected = {"pi", "opencode", "aider", "gemini", "qwen", "cursor", "codex"}
         assert set(orc.BUILTIN_AGENTS.keys()) == expected
+
+    def test_codex_cmd_is_read_only_and_isolated(self):
+        codex_cmd = orc.BUILTIN_AGENTS["codex"]["cmd"]
+        assert codex_cmd[:2] == ["codex", "exec"]
+        joined = " ".join(codex_cmd)
+        assert "{model}" in joined
+        assert "{provider}" not in joined, "codex has no provider concept"
+        for flag in ("-s", "read-only", "--ephemeral",
+                     "--skip-git-repo-check", "--ignore-user-config"):
+            assert flag in codex_cmd
+
+    def test_codex_cmd_renders_without_provider(self, tmp_path):
+        cmd = orc.build_agent_cmd(
+            "codex", {"agents": dict(orc.BUILTIN_AGENTS)},
+            prompt="P", task="T", model="gpt-5.6-terra",
+            provider="", adapters_dir=tmp_path,
+        )
+        assert "gpt-5.6-terra" in cmd
+        assert cmd[-1] == "P\nT"
 
     def test_each_agent_has_cmd_list(self):
         for name, defn in orc.BUILTIN_AGENTS.items():

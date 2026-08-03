@@ -85,6 +85,9 @@ BUILTIN_AGENTS: dict[str, dict] = {
     "gemini": {"cmd": ["gemini", "-p", "{prompt}\n{task}"]},
     "qwen": {"cmd": ["qwen-code", "--model", "{model}", "--message", "{prompt}\n{task}"]},
     "cursor": {"cmd": ["{adapters_dir}/cursor.sh", "{prompt}", "{task}", "{model}"]},
+    "codex": {"cmd": ["codex", "exec", "--model", "{model}",
+                      "-s", "read-only", "--ephemeral", "--skip-git-repo-check",
+                      "--ignore-user-config", "{prompt}\n{task}"]},
 }
 
 
@@ -1660,6 +1663,23 @@ def _emit_advisory(
     return 0
 
 
+def resolve_reviewer(args: argparse.Namespace) -> tuple[str, str, str] | None:
+    """(agent, provider, model) for the opt-in design review, or None when skipped.
+
+    Two shapes are valid: a provider+model pair (GLM through the explore agent
+    template) or an agent+model pair (codex, which has no provider concept).
+    A model alone is not enough — that is how the default skip stays the default.
+    """
+    agent = (getattr(args, "design_review_agent", "") or "").strip()
+    provider = (args.design_review_provider or "").strip()
+    model = (args.design_review_model or "").strip()
+    if not model:
+        return None
+    if not agent and not provider:
+        return None
+    return (agent, provider, model)
+
+
 def run_design_review_agent(
     worktree: Path,
     provider: str,
@@ -1668,16 +1688,19 @@ def run_design_review_agent(
     timeout: int,
     *,
     logger: "PhaseLogger | None" = None,
+    agent_override: str = "",
 ) -> subprocess.CompletedProcess[str]:
     """Run a read-only design review through the configured agent.
 
-    This is the opt-in GLM replacement for the retired Codex design review. It reuses
-    the explore agent template (e.g. Pi) with the given provider/model, so
-    `--design-review-provider zai-coding --design-review-model glm-5.2` runs the review
-    on GLM. Read-only by contract: the task instructs the agent not to touch files.
+    Two opt-in reviewers exist: GLM through the explore agent template
+    (`--design-review-provider zai-coding --design-review-model glm-5.2`) and
+    Codex/GPT (`--design-review-agent codex --design-review-model gpt-5.6-terra`).
+    `agent_override` selects the latter without changing explore_agent, which
+    other phases still use. Read-only by contract: the task instructs the agent
+    not to touch files, and the codex template also enforces it with a sandbox.
     """
     agent_config = load_agent_config(SKILL_DIR)
-    agent_name = agent_config.get("explore_agent", "pi")
+    agent_name = agent_override.strip() or agent_config.get("explore_agent", "pi")
     adapters_dir = SKILL_DIR / "adapters"
     review_task = (
         "Design review only. Read the design in the system prompt and respond with a "
@@ -1701,14 +1724,15 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
     design_path = artifact_dir / "design.md"
     intent_path = artifact_dir / "intent-summary.md"
     explore_path = artifact_dir / "explore-report.md"
-    review_provider = (args.design_review_provider or "").strip()
-    review_model = (args.design_review_model or "").strip()
-    reviewer_active = bool(review_provider and review_model)
+    reviewer = resolve_reviewer(args)
+    review_agent, review_provider, review_model = reviewer or ("", "", "")
+    reviewer_active = reviewer is not None
+    reviewer_label = f"{review_agent or review_provider}/{review_model}"
     logger.start(
         cmd=(
-            f"design review via {review_provider}/{review_model}"
+            f"design review via {reviewer_label}"
             if reviewer_active
-            else "design review skipped (Codex retired; no GLM reviewer configured)"
+            else "design review skipped (no reviewer configured)"
         ),
         cwd=str(worktree),
     )
@@ -1735,14 +1759,16 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
 
     review_path = artifact_dir / "design-review.md"
 
-    # Codex is retired. With no GLM reviewer configured, skip the design review entirely
-    # and record an advisory pass so implement can proceed. A GLM review is opt-in (via
-    # --design-review-provider/--design-review-model) for a very complex architecture only.
+    # With no reviewer configured, skip the design review entirely and record an advisory
+    # pass so implement can proceed. A review is opt-in (via
+    # --design-review-provider/--design-review-model or
+    # --design-review-agent codex --design-review-model) for a very complex architecture only.
     if not reviewer_active:
         note = (
-            "SKIPPED: design review not requested. Codex review is retired; pass "
+            "SKIPPED: design review not requested. Pass "
             "--design-review-provider/--design-review-model (e.g. zai-coding / glm-5.2) "
-            "to run a GLM design review for a very complex architecture."
+            "or --design-review-agent codex --design-review-model gpt-5.6-terra "
+            "to review a very complex architecture."
         )
         review_path.write_text(f"# Design Review\n\n{note}\n", encoding="utf-8")
         summary.setdefault("files", {})["designReview"] = str(review_path)
@@ -1770,10 +1796,10 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
     try:
         review_result = run_design_review_agent(
             worktree, review_provider, review_model, review_prompt,
-            args.agent_timeout, logger=logger,
+            args.agent_timeout, logger=logger, agent_override=review_agent,
         )
     except subprocess.TimeoutExpired:
-        logger.log(f"[TIMEOUT] design review ({review_provider}/{review_model}) exceeded {args.agent_timeout}s")
+        logger.log(f"[TIMEOUT] design review ({reviewer_label}) exceeded {args.agent_timeout}s")
         logger.finish(124, "failed")
         if args.strict_review:
             summary["phases"]["verify_design"] = phase_record("timeout", logger)
@@ -1789,7 +1815,7 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
     review_output = review_result.stdout
     logger.log(sanitize_output(review_output))
     review_path.write_text(
-        f"# Design Review ({review_provider}/{review_model})\n\n{review_output}\n",
+        f"# Design Review ({reviewer_label})\n\n{review_output}\n",
         encoding="utf-8",
     )
     summary.setdefault("files", {})["designReview"] = str(review_path)
@@ -3182,6 +3208,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default="",
         help="Agent model for the optional Phase 4 design review (e.g. glm-5.2). "
         "Requires --design-review-provider; empty (default) skips the review.",
+    )
+    parser.add_argument(
+        "--design-review-agent",
+        default="",
+        help="Agent for the optional Phase 4 design review when the reviewer has no "
+        "provider (e.g. codex). Requires --design-review-model. Empty (default) uses "
+        "the configured explore agent with --design-review-provider.",
     )
     parser.add_argument("--claude-model", default="claude-opus-4-6")
     parser.add_argument("--test-command", default="")

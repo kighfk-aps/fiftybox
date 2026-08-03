@@ -6,6 +6,7 @@ PLANS_SKILL_DIR="$HOME/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$HOME/.claude/skills/fiftybox-local"
 EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-execute"
 FREE_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-free-execute"
+GPT_REVIEW_SKILL_DIR="$HOME/.claude/skills/fiftybox-gpt-review"
 LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
@@ -62,6 +63,12 @@ mkdir -p "$FREE_EXECUTE_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-free-execute/SKILL.md" "$FREE_EXECUTE_SKILL_DIR/SKILL.md"
 cp "$SCRIPT_DIR/skills/fiftybox-free-execute/scripts/"*.py "$FREE_EXECUTE_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-free-execute → $FREE_EXECUTE_SKILL_DIR"
+
+# Install fiftybox-gpt-review skill (Codex/GPT design & plan review)
+mkdir -p "$GPT_REVIEW_SKILL_DIR/scripts"
+cp "$SCRIPT_DIR/skills/fiftybox-gpt-review/SKILL.md" "$GPT_REVIEW_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-gpt-review/scripts/"*.py "$GPT_REVIEW_SKILL_DIR/scripts/"
+log "Installed Claude skill fiftybox-gpt-review → $GPT_REVIEW_SKILL_DIR"
 
 # Install fiftybox-local-execute skill
 # skills/fiftybox-local*/ is gitignored, so a clean clone or an orchestrate
@@ -137,6 +144,8 @@ cp "$SCRIPT_DIR/commands/fiftybox-execute.md" "$COMMANDS_DIR/fiftybox-execute.md
 log "Installed commands/fiftybox-execute.md → $COMMANDS_DIR/fiftybox-execute.md"
 cp "$SCRIPT_DIR/commands/fiftybox-free-execute.md" "$COMMANDS_DIR/fiftybox-free-execute.md"
 log "Installed commands/fiftybox-free-execute.md → $COMMANDS_DIR/fiftybox-free-execute.md"
+cp "$SCRIPT_DIR/commands/fiftybox-gpt-review.md" "$COMMANDS_DIR/fiftybox-gpt-review.md"
+log "Installed commands/fiftybox-gpt-review.md → $COMMANDS_DIR/fiftybox-gpt-review.md"
 for local_cmd in fiftybox-local fiftybox-local-execute; do
   # commands/fiftybox-local*.md is gitignored alongside its skill.
   if [[ -f "$SCRIPT_DIR/commands/$local_cmd.md" ]]; then

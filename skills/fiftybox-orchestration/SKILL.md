@@ -224,7 +224,18 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --design-review-provider zai-coding --design-review-model glm-5.2
 ```
 
-Either way the helper writes `design-review.md`. The GLM review is **advisory**. After running it, read `design-review.md`. If the verdict is REJECTED or UNCLEAR:
+Codex/GPT is the other opt-in reviewer. It needs no provider — pass the agent instead:
+
+```bash
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
+  --phase verify-design --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --design-review-agent codex --design-review-model gpt-5.6-terra
+```
+
+Codex must be enabled on this machine (`codex --version` must succeed). Either reviewer is **advisory**: the verdict is recorded in `design-review.md` and surfaced, but does not stop the pipeline unless you pass `--strict-review`.
+
+Either way the helper writes `design-review.md`. After running it, read `design-review.md`. If the verdict is REJECTED or UNCLEAR:
 - Summarize the specific concerns for the user (1-3 bullet points)
 - Proceed to the next phase by default
 - Only stop and ask the user if the concerns indicate a fundamental design flaw (e.g., security vulnerability, data loss risk, approach is technically infeasible)
@@ -517,9 +528,9 @@ Use this shape:
 3. <option 3>
 ```
 
-### GLM Design Review Failures (opt-in only)
+### Design Review Failures (opt-in only)
 
-The Phase 4 design review is skipped by default. When you enable it (`--design-review-provider zai-coding --design-review-model glm-5.2`) it runs on GLM as an **advisory** step: a timeout, an agent error, or a REJECTED/UNCLEAR verdict is recorded in `design-review.md` and surfaced but does not stop the pipeline (unless you pass `--strict-review`). If the GLM review is unavailable, summarize what you can and proceed, or re-run the phase with the reviewer flags once the provider is reachable.
+The Phase 4 design review is skipped by default. When you enable it (`--design-review-provider zai-coding --design-review-model glm-5.2`) it runs on GLM as an **advisory** step: a timeout, an agent error, or a REJECTED/UNCLEAR verdict is recorded in `design-review.md` and surfaced but does not stop the pipeline (unless you pass `--strict-review`). The codex reviewer (`--design-review-agent codex --design-review-model ...`) follows the same advisory rules. If the review is unavailable, summarize what you can and proceed, or re-run the phase with the reviewer flags once the provider is reachable.
 
 ### No Changes After Implementation
 

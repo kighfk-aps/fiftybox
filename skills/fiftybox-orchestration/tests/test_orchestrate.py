@@ -1856,3 +1856,63 @@ def test_complete_guard_ignores_sensitive_files_left_pending():
         ).stdout.split()
         assert ".env" not in listed
         assert "new.py" in listed
+
+
+class TestDesignReviewerSelection:
+    """--design-review-agent selects the reviewer without touching explore_agent."""
+
+    def _args(self, **kw):
+        import argparse as _argparse
+        base = {"design_review_provider": "", "design_review_model": "",
+                "design_review_agent": ""}
+        base.update(kw)
+        return _argparse.Namespace(**base)
+
+    def test_inactive_without_model(self):
+        args = self._args(design_review_agent="codex")
+        assert orchestrate.resolve_reviewer(args) is None
+
+    def test_inactive_when_nothing_passed(self):
+        assert orchestrate.resolve_reviewer(self._args()) is None
+
+    def test_model_alone_is_not_enough(self):
+        args = self._args(design_review_model="glm-5.2")
+        assert orchestrate.resolve_reviewer(args) is None
+
+    def test_glm_provider_and_model_still_active(self):
+        args = self._args(design_review_provider="zai-coding",
+                          design_review_model="glm-5.2")
+        assert orchestrate.resolve_reviewer(args) == ("", "zai-coding", "glm-5.2")
+
+    def test_codex_agent_and_model_active_without_provider(self):
+        args = self._args(design_review_agent="codex",
+                          design_review_model="gpt-5.6-terra")
+        assert orchestrate.resolve_reviewer(args) == ("codex", "", "gpt-5.6-terra")
+
+
+class TestRunDesignReviewAgentOverride:
+    def _patch_agent_env(self, monkeypatch, captured):
+        def fake_run(cmd, cwd, timeout=None):
+            captured["cmd"] = cmd
+            return subprocess.CompletedProcess(cmd, 0, "APPROVED: ok", "")
+
+        monkeypatch.setattr(orchestrate, "run", fake_run)
+        monkeypatch.setattr(orchestrate, "load_agent_config",
+                            lambda _d: {"explore_agent": "pi",
+                                        "agents": dict(orchestrate.BUILTIN_AGENTS)})
+
+    def test_agent_override_replaces_explore_agent(self, monkeypatch, tmp_path):
+        captured = {}
+        self._patch_agent_env(monkeypatch, captured)
+        orchestrate.run_design_review_agent(
+            tmp_path, "", "gpt-5.6-terra", "PROMPT", 60, agent_override="codex")
+        assert captured["cmd"][0] == "codex"
+        assert "gpt-5.6-terra" in captured["cmd"]
+
+    def test_no_override_keeps_explore_agent(self, monkeypatch, tmp_path):
+        captured = {}
+        self._patch_agent_env(monkeypatch, captured)
+        orchestrate.run_design_review_agent(
+            tmp_path, "zai-coding", "glm-5.2", "PROMPT", 60)
+        assert captured["cmd"][0] == "pi"
+        assert "zai-coding" in captured["cmd"]

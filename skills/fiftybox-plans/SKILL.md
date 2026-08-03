@@ -190,6 +190,16 @@ python3 <orchestrate.py> --phase verify-design --task "<task>" --cwd "$(pwd)" \
   --design-review-provider zai-coding --design-review-model glm-5.2
 ```
 
+Codex/GPT is the other opt-in reviewer. It needs no provider — pass the agent instead:
+
+```bash
+python3 <orchestrate.py> --phase verify-design --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --design-review-agent codex --design-review-model gpt-5.6-terra
+```
+
+Codex must be enabled on this machine (`codex --version` must succeed). Either reviewer is **advisory**: the verdict is recorded in `design-review.md` and surfaced, but does not stop the pipeline unless you pass `--strict-review`.
+
 If the plan review is `REVISE`, update `<artifactDir>/plan.md` using the review feedback, then review once more. If it is `BLOCKED`, stop with the failure report and the blocker.
 
 ## Phase 6: Save The Markdown Plan

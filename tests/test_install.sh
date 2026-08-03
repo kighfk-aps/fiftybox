@@ -19,6 +19,7 @@ PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
 LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
 FREE_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-free-execute"
+GPT_REVIEW_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-gpt-review"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
@@ -86,6 +87,18 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$FREE_EXECUTE_SKILL_DIR/scripts/discover_free_models.py" ]] \
     && pass "discover_free_models.py installed" \
     || fail "discover_free_models.py not installed"
+
+[[ -f "$GPT_REVIEW_SKILL_DIR/SKILL.md" ]] \
+    && pass "fiftybox-gpt-review SKILL.md installed" \
+    || fail "fiftybox-gpt-review SKILL.md not installed"
+
+[[ -f "$GPT_REVIEW_SKILL_DIR/scripts/gpt_review.py" ]] \
+    && pass "gpt_review.py installed" \
+    || fail "gpt_review.py not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-gpt-review.md" ]] \
+    && pass "fiftybox-gpt-review.md command installed" \
+    || fail "fiftybox-gpt-review.md command not installed"
 
 [[ -f "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md" ]] \
     && pass "Codex fiftybox-plans skill installed" \
