@@ -14,6 +14,7 @@ import argparse
 import datetime
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -33,6 +34,8 @@ DEFAULT_EFFORT = "high"
 DEFAULT_TIMEOUT = 900
 DEFAULT_OUT_DIR = "docs/reviews"
 
+VALID_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
+
 REENABLE_HINT = (
     "Codex is disabled on this machine (shutout shim). Re-enable it with:\n"
     "  rm /opt/homebrew/bin/codex\n"
@@ -40,6 +43,8 @@ REENABLE_HINT = (
 )
 
 VERDICTS = ("APPROVED", "REVISE", "BLOCKED")
+
+DATE_PREFIX_RE = re.compile(r"^\d{4}-\d{2}-\d{2}-")
 
 REVIEW_CONTRACT = """You are reviewing a design or implementation-plan document.
 
@@ -123,21 +128,34 @@ def build_prompt(doc_name: str, doc_text: str, contexts: list[tuple[str, str]]) 
 
 
 def parse_verdict(text: str) -> str:
-    """Read the verdict off the first non-blank line; UNKNOWN when off-contract."""
+    """Read the verdict off the first non-blank line; UNKNOWN when off-contract.
+
+    A verdict literal only counts when it is followed by a token boundary:
+    end of line, or a character that is neither alphanumeric nor an
+    underscore (space, ":", "-", "—", ".", ...). This keeps words like
+    "APPROVEDLY" or "BLOCKEDNESS" from being misread as verdicts.
+    """
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped:
             continue
         for verdict in VERDICTS:
             if stripped.startswith(verdict):
-                return verdict
+                rest = stripped[len(verdict):]
+                if not rest or not (rest[0].isalnum() or rest[0] == "_"):
+                    return verdict
         return "UNKNOWN"
     return "UNKNOWN"
 
 
 def review_log_path(out_dir: Path, doc_path: Path, today: str) -> Path:
-    """<out>/<date>-<doc-slug>-gpt-review[-N].md, never overwriting a log."""
-    slug = doc_path.stem
+    """<out>/<date>-<doc-slug>-gpt-review[-N].md, never overwriting a log.
+
+    A `YYYY-MM-DD-` prefix already present in the document filename is
+    dropped so the review date is not duplicated; the log date is always
+    the day the review runs.
+    """
+    slug = DATE_PREFIX_RE.sub("", doc_path.stem)
     candidate = out_dir / f"{today}-{slug}-gpt-review.md"
     counter = 2
     while candidate.exists():
@@ -192,14 +210,27 @@ def main(argv: list[str] | None = None) -> int:
         print(f"document not found: {doc_path}", file=sys.stderr)
         return EXIT_ARGS
 
+    if args.effort not in VALID_EFFORTS:
+        print(f"invalid effort '{args.effort}'. "
+              f"Valid efforts: {', '.join(VALID_EFFORTS)}", file=sys.stderr)
+        return EXIT_ARGS
+
+    if args.timeout <= 0:
+        print(f"--timeout must be positive, got {args.timeout}", file=sys.stderr)
+        return EXIT_ARGS
+
     contexts: list[tuple[str, str]] = []
     for raw in args.context:
         ctx = Path(raw)
         if not ctx.is_file():
             print(f"context file not found: {ctx}", file=sys.stderr)
             return EXIT_ARGS
-        contexts.append((ctx.name,
-                         ctx.read_text(encoding="utf-8", errors="replace")))
+        try:
+            text = ctx.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            print(f"could not read context file {ctx}: {exc}", file=sys.stderr)
+            return EXIT_ARGS
+        contexts.append((ctx.name, text))
 
     slugs = load_model_slugs(codex_cache_path())
     if slugs is None:
@@ -210,11 +241,12 @@ def main(argv: list[str] | None = None) -> int:
               f"Available: {', '.join(slugs)}", file=sys.stderr)
         return EXIT_BAD_MODEL
 
-    prompt = build_prompt(
-        doc_path.name,
-        doc_path.read_text(encoding="utf-8", errors="replace"),
-        contexts,
-    )
+    try:
+        doc_text = doc_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as exc:
+        print(f"could not read document {doc_path}: {exc}", file=sys.stderr)
+        return EXIT_ARGS
+    prompt = build_prompt(doc_path.name, doc_text, contexts)
 
     # `codex` is resolved through the (possibly restricted) PATH, but it may be
     # a script whose shebang needs env/bash from the standard system dirs, so

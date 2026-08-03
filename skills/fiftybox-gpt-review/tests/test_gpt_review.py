@@ -124,6 +124,18 @@ class TestParseVerdict:
     def test_verdict_word_only_on_later_line_is_unknown(self):
         assert gr.parse_verdict("notes\nAPPROVED") == "UNKNOWN"
 
+    def test_prefix_without_boundary_is_unknown(self):
+        assert gr.parse_verdict("APPROVEDLY great work") == "UNKNOWN"
+
+    def test_blocked_prefix_word_is_unknown(self):
+        assert gr.parse_verdict("BLOCKEDNESS is not a verdict") == "UNKNOWN"
+
+    def test_verdict_followed_by_whitespace_is_accepted(self):
+        assert gr.parse_verdict("REVISE two gaps found") == "REVISE"
+
+    def test_bare_verdict_line_is_accepted(self):
+        assert gr.parse_verdict("BLOCKED") == "BLOCKED"
+
 
 class TestReviewLogPath:
     def test_uses_date_and_doc_slug(self, tmp_path):
@@ -142,6 +154,18 @@ class TestReviewLogPath:
             (tmp_path / name).write_text("x", encoding="utf-8")
         p = gr.review_log_path(tmp_path, Path("a/d.md"), "2026-08-03")
         assert p == tmp_path / "2026-08-03-d-gpt-review-3.md"
+
+    def test_doc_named_with_todays_date_is_not_doubled(self, tmp_path):
+        p = gr.review_log_path(tmp_path, Path("d/2026-08-03-my-plan.md"), "2026-08-03")
+        assert p == tmp_path / "2026-08-03-my-plan-gpt-review.md"
+
+    def test_doc_named_with_another_date_uses_review_date(self, tmp_path):
+        p = gr.review_log_path(tmp_path, Path("d/2026-07-01-old-plan.md"), "2026-08-03")
+        assert p == tmp_path / "2026-08-03-old-plan-gpt-review.md"
+
+    def test_date_like_prefix_that_is_not_a_date_is_kept(self, tmp_path):
+        p = gr.review_log_path(tmp_path, Path("d/2026-8-3-plan.md"), "2026-08-03")
+        assert p == tmp_path / "2026-08-03-2026-8-3-plan-gpt-review.md"
 
 
 class TestBuildCodexCmd:
@@ -297,3 +321,55 @@ class TestMain:
         monkeypatch.setenv("PATH", str(tmp_path / "bin"))
         rc = gr.main(["--doc", str(doc), "--out", str(tmp_path / "r"), "--timeout", "1"])
         assert rc == gr.EXIT_TIMEOUT
+
+    def test_invalid_effort_exits_2(self, tmp_path, doc, cache, monkeypatch, capsys):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        rc = gr.main(["--doc", str(doc), "--effort", "turbo",
+                      "--out", str(tmp_path / "r")])
+        assert rc == gr.EXIT_ARGS
+        assert "effort" in capsys.readouterr().err.lower()
+
+    def test_every_valid_effort_is_accepted(self, tmp_path, doc, cache, monkeypatch):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        for effort in gr.VALID_EFFORTS:
+            rc = gr.main(["--doc", str(doc), "--effort", effort,
+                          "--out", str(tmp_path / "r")])
+            assert rc == 0, f"{effort} should be accepted"
+
+    def test_zero_timeout_exits_2(self, tmp_path, doc, cache, monkeypatch):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        assert gr.main(["--doc", str(doc), "--timeout", "0",
+                        "--out", str(tmp_path / "r")]) == gr.EXIT_ARGS
+
+    def test_negative_timeout_exits_2(self, tmp_path, doc, cache, monkeypatch):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        assert gr.main(["--doc", str(doc), "--timeout", "-5",
+                        "--out", str(tmp_path / "r")]) == gr.EXIT_ARGS
+
+    def test_unreadable_doc_exits_2(self, tmp_path, doc, cache, monkeypatch, capsys):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        doc.chmod(0o000)
+        try:
+            rc = gr.main(["--doc", str(doc), "--out", str(tmp_path / "r")])
+        finally:
+            doc.chmod(0o644)
+        assert rc == gr.EXIT_ARGS
+        assert "read" in capsys.readouterr().err.lower()
+
+    def test_unreadable_context_exits_2(self, tmp_path, doc, cache, monkeypatch):
+        _stub_codex(tmp_path / "bin")
+        monkeypatch.setenv("PATH", str(tmp_path / "bin"))
+        ctx = tmp_path / "ctx.md"
+        ctx.write_text("x", encoding="utf-8")
+        ctx.chmod(0o000)
+        try:
+            rc = gr.main(["--doc", str(doc), "--context", str(ctx),
+                          "--out", str(tmp_path / "r")])
+        finally:
+            ctx.chmod(0o644)
+        assert rc == gr.EXIT_ARGS
