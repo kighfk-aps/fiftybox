@@ -6,6 +6,7 @@ PLANS_SKILL_DIR="$HOME/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$HOME/.claude/skills/fiftybox-local"
 EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-execute"
 FREE_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-free-execute"
+CC_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-cc-execute"
 GPT_REVIEW_SKILL_DIR="$HOME/.claude/skills/fiftybox-gpt-review"
 LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
@@ -21,7 +22,7 @@ log "Installing fiftybox orchestrate harness..."
 echo ""
 
 # Check prerequisites — warn but don't abort so partial installs still work
-for bin in pi claude; do
+for bin in pi claude cmd; do
   if command -v "$bin" &>/dev/null; then
     log "  ✓ $bin"
   else
@@ -63,6 +64,12 @@ mkdir -p "$FREE_EXECUTE_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-free-execute/SKILL.md" "$FREE_EXECUTE_SKILL_DIR/SKILL.md"
 cp "$SCRIPT_DIR/skills/fiftybox-free-execute/scripts/"*.py "$FREE_EXECUTE_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-free-execute → $FREE_EXECUTE_SKILL_DIR"
+
+# Install fiftybox-cc-execute skill (CommandCode paid plans)
+mkdir -p "$CC_EXECUTE_SKILL_DIR/scripts"
+cp "$SCRIPT_DIR/skills/fiftybox-cc-execute/SKILL.md" "$CC_EXECUTE_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-cc-execute/scripts/"*.py "$CC_EXECUTE_SKILL_DIR/scripts/"
+log "Installed Claude skill fiftybox-cc-execute → $CC_EXECUTE_SKILL_DIR"
 
 # Install fiftybox-gpt-review skill (Codex/GPT design & plan review)
 mkdir -p "$GPT_REVIEW_SKILL_DIR/scripts"
@@ -146,6 +153,8 @@ cp "$SCRIPT_DIR/commands/fiftybox-free-execute.md" "$COMMANDS_DIR/fiftybox-free-
 log "Installed commands/fiftybox-free-execute.md → $COMMANDS_DIR/fiftybox-free-execute.md"
 cp "$SCRIPT_DIR/commands/fiftybox-gpt-review.md" "$COMMANDS_DIR/fiftybox-gpt-review.md"
 log "Installed commands/fiftybox-gpt-review.md → $COMMANDS_DIR/fiftybox-gpt-review.md"
+cp "$SCRIPT_DIR/commands/fiftybox-cc-execute.md" "$COMMANDS_DIR/fiftybox-cc-execute.md"
+log "Installed commands/fiftybox-cc-execute.md → $COMMANDS_DIR/fiftybox-cc-execute.md"
 for local_cmd in fiftybox-local fiftybox-local-execute; do
   # commands/fiftybox-local*.md is gitignored alongside its skill.
   if [[ -f "$SCRIPT_DIR/commands/$local_cmd.md" ]]; then

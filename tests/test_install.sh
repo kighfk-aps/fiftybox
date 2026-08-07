@@ -19,6 +19,7 @@ PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
 LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
 FREE_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-free-execute"
+CC_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-cc-execute"
 GPT_REVIEW_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-gpt-review"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
@@ -87,6 +88,18 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$FREE_EXECUTE_SKILL_DIR/scripts/discover_free_models.py" ]] \
     && pass "discover_free_models.py installed" \
     || fail "discover_free_models.py not installed"
+
+[[ -f "$CC_EXECUTE_SKILL_DIR/SKILL.md" ]] \
+    && pass "fiftybox-cc-execute SKILL.md installed" \
+    || fail "fiftybox-cc-execute SKILL.md not installed"
+
+[[ -f "$CC_EXECUTE_SKILL_DIR/scripts/cc_preflight.py" ]] \
+    && pass "cc_preflight.py installed" \
+    || fail "cc_preflight.py not installed"
+
+[[ -f "$COMMANDS_DIR/fiftybox-cc-execute.md" ]] \
+    && pass "fiftybox-cc-execute slash command installed" \
+    || fail "fiftybox-cc-execute slash command not installed"
 
 [[ -f "$GPT_REVIEW_SKILL_DIR/SKILL.md" ]] \
     && pass "fiftybox-gpt-review SKILL.md installed" \
@@ -275,6 +288,10 @@ fi
 [[ -f "$BARE_HOME/.claude/skills/fiftybox-free-execute/SKILL.md" ]] \
     && pass "fiftybox-free-execute still installed without local-model skills" \
     || fail "fiftybox-free-execute missing when local-model skills absent"
+
+[[ -f "$BARE_HOME/.claude/skills/fiftybox-cc-execute/SKILL.md" ]] \
+    && pass "fiftybox-cc-execute still installed without local-model skills" \
+    || fail "fiftybox-cc-execute missing when local-model skills absent"
 
 [[ -f "$BARE_HOME/.claude/commands/fiftybox-execute.md" ]] \
     && pass "slash commands still installed without local-model skills" \

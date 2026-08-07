@@ -88,6 +88,9 @@ BUILTIN_AGENTS: dict[str, dict] = {
     "codex": {"cmd": ["codex", "exec", "--model", "{model}",
                       "-s", "read-only", "--ephemeral", "--skip-git-repo-check",
                       "--ignore-user-config", "{prompt}\n{task}"]},
+    "commandcode": {"cmd": ["cmd", "-p", "{prompt}\n{task}", "-m", "{model}",
+                            "--yolo", "--trust", "--no-session",
+                            "--skip-onboarding", "--no-auto-update"]},
 }
 
 
