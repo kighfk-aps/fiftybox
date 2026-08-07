@@ -58,6 +58,8 @@ Ask the user for the design document. Accept any of:
 
 Write the design to `<artifactDir>/design.md`.
 
+**`design.md` is mandatory.** Phase 5 reads it even with `--skip-verify`; without it the phase fails immediately with `design.md not found in artifact directory`.
+
 If the user also has an intent summary or scope document, write it to `<artifactDir>/intent-summary.md`. Otherwise, generate a minimal one from the design:
 
 ```markdown
@@ -143,6 +145,8 @@ For each task:
 - Import/reference functions and classes that **don't exist yet** — they will be created by Pi CLI
 
 **Write tests to `<artifactDir>/tests/` AND to the actual project test directory.**
+
+This is an explicit exception to the Safety Contract's ban on editing outside `.omx/artifacts/` — the ban targets implementation files, not Red-phase tests.
 
 Save a test manifest to `<artifactDir>/test-manifest.md`:
 
@@ -380,7 +384,7 @@ Pi CLI 페이즈(implement, pi-deploy)가 실패하고 JSON에 `"model_unavailab
 
 Inherits from /fiftybox-orchestration:
 
-- No direct file edits outside `.omx/artifacts/` while active
+- No direct file edits outside `.omx/artifacts/` while active. **Red-phase test files (Step 4) are an explicit exception** — Claude writes tests into the project test directory. The ban targets implementation files
 - No force push, force merge, reset hard, or `-D` branch delete
 - No push before Phase 7
 - Pi CLI must not commit or push

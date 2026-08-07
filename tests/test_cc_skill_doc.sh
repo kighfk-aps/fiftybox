@@ -74,9 +74,10 @@ has "$SKILL" "Red 페이즈 테스트 파일이 예외임을 명시한다" \
     "SKILL.md instructs carving out Red-phase tests in that section"
 has "$SKILL" "스코프 위반" "SKILL.md explains the consequence of omitting the carve-out"
 
-# Step 7은 테스트 명령만 돌리지 않는다 — advisory 스펙 리뷰도 함께 수행하며,
-# 스코프 지적이 나오는 곳이 바로 여기다. 문서가 이를 반영해야 한다.
-has "$SKILL" "advisory" "SKILL.md documents that review-test also runs an advisory review"
+# Codex는 은퇴했다(2026-07-15 라우팅 결정). 형제 스킬들과 마찬가지로 review-test에
+# --skip-codex-review를 넘겨야 한다. 빠뜨리면 매 실행마다 advisory 리뷰가 돈다.
+has "$SKILL" "--skip-codex-review" "SKILL.md passes --skip-codex-review to review-test"
+has "$SKILL" "Codex는 은퇴했다" "SKILL.md states why the Codex review is skipped"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

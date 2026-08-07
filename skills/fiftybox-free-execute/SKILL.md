@@ -82,6 +82,9 @@ stdout의 JSON을 읽는다. 수십 초 걸릴 수 있다(후보마다 실제 �
 설계를 `<artifactDir>/design.md`에 쓴다(artifactDir은 Step 4에서 생긴다. 그전까지는
 메모리에 들고 있는다).
 
+**`design.md`는 필수다.** `--skip-verify`를 줘도 구현 페이즈가 이 파일을 읽는다.
+없으면 `design.md not found in artifact directory`로 즉시 실패한다.
+
 ### Step 4: Setup (Phase 0)
 
 ```bash
@@ -133,6 +136,9 @@ JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다.
 - 테스트 이름이 수용 기준처럼 읽히게 쓴다
 
 `<artifactDir>/tests/`와 실제 프로젝트 테스트 디렉터리 양쪽에 쓴다.
+
+이것은 「안전 계약」의 `.omx/artifacts/` 밖 편집 금지 규칙에 대한 명시적 예외다.
+금지의 대상은 구현 파일이며 Red 페이즈 테스트 파일은 해당하지 않는다.
 
 **실패하는지 확인한다(Red):**
 
@@ -304,7 +310,9 @@ opencode CLI는 rate limit을 종료 코드로 구분하지 않는다. stdout/st
 
 /fiftybox-orchestration에서 상속:
 
-- `.omx/artifacts/` 밖 직접 편집 금지
+- `.omx/artifacts/` 밖 직접 편집 금지. **단 Step 6의 Red 페이즈 테스트 파일은
+  명시적 예외다** — Claude는 프로젝트 테스트 디렉터리에 테스트를 쓴다. 금지의
+  대상은 구현 파일이다
 - force push, force merge, reset hard, `-D` 브랜치 삭제 금지
 - Phase 7 이전 push 금지
 - opencode는 커밋·푸시하지 않는다
