@@ -114,6 +114,14 @@ stdout JSON의 `status` 필드로 분기한다:
 설계를 `<artifactDir>/design.md`에 쓴다(artifactDir은 Step 2에서 생긴다. 그
 전까지는 메모리에 들고 있는다).
 
+**design.md는 필수다.** `--skip-verify`를 줘도 implement 페이즈가 이 파일을 읽는다.
+없으면 `design.md not found in artifact directory`로 즉시 실패한다.
+
+**설계 문서의 범위(Out of Scope) 절에 Red 페이즈 테스트 파일이 예외임을 명시한다.**
+그러지 않으면 Step 7의 리뷰가 Claude가 쓴 테스트 파일을 스코프 위반으로 지적한다.
+예: "단 Red 페이즈 테스트 파일은 예외다 — Claude가 테스트를 추가하는 것은 이
+작업의 정상적인 일부다."
+
 ### Step 2 — Setup (Phase 0)
 
 ```bash
@@ -233,8 +241,10 @@ Step 7로 간다.
 
 ### Step 7 — review-test (Phase 6)
 
-스펙 준수와 통합 검사는 Step 6에서 끝났으므로 이 페이즈는 객관적 테스트 명령만
-돌린다:
+스펙 준수와 통합 검사는 Step 6에서 이미 했다. 이 페이즈는 객관적 테스트 명령을
+돌리고, 그에 더해 **advisory 스펙 리뷰**를 수행한다. 리뷰가 REJECTED를 내도
+파이프라인은 멈추지 않지만(테스트 실패는 항상 막는다), 지적 내용은 읽고 판단해야
+한다. 설계 문서의 범위 절과 어긋나는 파일이 있으면 여기서 지적된다:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
