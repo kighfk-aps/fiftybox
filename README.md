@@ -66,6 +66,19 @@ cd fiftybox && ./install.sh
 /fiftybox-orchestration "add JWT authentication to the API"
 ```
 
+### Commands
+
+fiftybox ships six slash commands:
+
+| Command | What it does |
+|---------|--------------|
+| `/fiftybox-orchestration` | Full pipeline: explore → clarify → design → implement → review → commit → push |
+| `/fiftybox-plans` | Planning front half only — produces a saved Markdown plan for later handoff |
+| `/fiftybox-execute` | Parallel-batch TDD execution with Pi CLI as the implementer |
+| `/fiftybox-free-execute` | Sequential TDD execution on opencode free-tier models |
+| `/fiftybox-cc-execute` | Parallel-batch TDD execution with the CommandCode (`cmd`) CLI as the implementer |
+| `/fiftybox-gpt-review` | Reviews a design or plan document with Codex GPT models |
+
 ### Flags
 
 | Flag | Description |
