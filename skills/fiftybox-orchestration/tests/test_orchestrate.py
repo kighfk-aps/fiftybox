@@ -1992,6 +1992,80 @@ def test_working_hashes_is_unaffected_by_staging():
         assert orchestrate.working_hashes(root, ["tracked.txt"]) == before
 
 
+def test_dirty_baseline_handles_non_ascii_filenames():
+    """core.quotePath 기본값(true)이면 비ASCII 경로가 8진 이스케이프로 나와
+    working_hashes 의 is_file() 검사를 통과하지 못하고 조용히 빠진다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "한글.md").write_text("base\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "add korean file"], cwd=root, check=True)
+        (root / "한글.md").write_text("dirty\n")
+
+        baseline = orchestrate.dirty_baseline(root)
+        assert "한글.md" in baseline
+        assert baseline["한글.md"] != orchestrate.DIRTY_MISSING
+
+
+def test_working_hashes_batch_failure_reports_unknown_sentinel_for_every_path():
+    """hash-object 배치가 통째로 실패해도 경로가 dict 에서 사라지면 안 된다 —
+    사라지면 current.get(p) 와 before.get(p) 가 둘 다 None 이 되어 '무변경'으로 샌다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty\n")
+        (root / "other.txt").write_text("dirty2\n")
+
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="fatal: boom\n")
+        with patch("orchestrate.run", return_value=failed):
+            hashes = orchestrate.working_hashes(root, ["tracked.txt", "other.txt"])
+
+        assert hashes["tracked.txt"] != orchestrate.DIRTY_MISSING
+        assert hashes["other.txt"] != orchestrate.DIRTY_MISSING
+        assert hashes["tracked.txt"].startswith(orchestrate.UNKNOWN)
+        assert hashes["other.txt"].startswith(orchestrate.UNKNOWN)
+
+
+def test_working_hashes_unknown_sentinel_is_unique_per_call():
+    """서로 다른 실패 호출의 UNKNOWN 값이 같으면, 그 실패가 실패를 가려
+    '변경 없음'으로 보이게 된다 — before/after 스냅샷이 둘 다 실패했을 때가 그렇다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty\n")
+
+        failed = subprocess.CompletedProcess(args=[], returncode=1, stdout="fatal: boom\n")
+        with patch("orchestrate.run", return_value=failed):
+            first = orchestrate.working_hashes(root, ["tracked.txt"])
+            second = orchestrate.working_hashes(root, ["tracked.txt"])
+
+        assert first["tracked.txt"] != second["tracked.txt"]
+
+
+def test_changed_files_reports_change_when_hashing_fails_instead_of_hiding_it():
+    """hash-object 배치가 baseline 시점과 changed_files 시점 양쪽에서 다 실패하는,
+    이 결함이 실제로 숨어드는 경우를 재현한다. before/after 가 둘 다 실패하면
+    이전 코드는 두 값 다 dict 에서 빠져 None == None 으로 '무변경' 처리했다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("red phase edit\n")
+        before_files = orchestrate.repo_snapshot(root)
+
+        real_run = orchestrate.run
+
+        def flaky_run(cmd, cwd, timeout=600, text=None):
+            if "hash-object" in cmd:
+                return subprocess.CompletedProcess(cmd, 1, "fatal: boom\n")
+            return real_run(cmd, cwd, timeout=timeout, text=text)
+
+        with patch("orchestrate.run", side_effect=flaky_run):
+            before_dirty = orchestrate.dirty_baseline(root)
+
+            (root / "tracked.txt").write_text("agent work\n")
+
+            changed = orchestrate.changed_files(root, before_files, before_dirty)
+
+        assert changed == ["tracked.txt"]
+
+
 def test_changed_files_excludes_file_dirty_before_the_run():
     """이번 오탐의 회귀 테스트."""
     with tempfile.TemporaryDirectory() as tmp:
@@ -2067,6 +2141,11 @@ def test_pre_existing_dirty_tracked_file_is_not_an_ownership_violation():
 
     Claude 가 Red 페이즈에서 추적 중인 테스트 파일을 고쳐두면, 에이전트가
     자기 소유 파일만 건드려도 implement 가 소유권 위반으로 죽었다.
+
+    task-batches.md 가 있으므로 _implement_sequential 경로를 탄다 —
+    phase_implement 자체 경로만 커버하던 배선 검증(아래 테스트)의 사각지대를
+    메운다. changed_files 를 고정값으로 스텁하지 않고 스파이해서, dirty_baseline
+    이 실제로 changed_files 까지 전달되는지 증명한다.
     """
     with tempfile.TemporaryDirectory() as tmp:
         artifact_dir = Path(tmp) / "art"
@@ -2091,17 +2170,23 @@ def test_pre_existing_dirty_tracked_file_is_not_an_ownership_violation():
             "--artifact-dir", str(artifact_dir), "--skip-verify",
         ])
         ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="Done.\n")
+        seen = {}
+
+        def spy_changed_files(_root, _before=None, _before_dirty=None):
+            seen["baseline"] = _before_dirty
+            return ["src/owned.py"]
 
         with patch("orchestrate.run", return_value=ok_result), \
              patch("orchestrate.repo_snapshot", return_value=set()), \
              patch("orchestrate.dirty_baseline",
                    return_value={"tests/test_doc.sh": "aaaa"}), \
-             patch("orchestrate.changed_files", return_value=["src/owned.py"]):
+             patch("orchestrate.changed_files", side_effect=spy_changed_files):
             rc = orchestrate.phase_implement(Path(tmp), artifact_dir, args)
 
         assert rc == 0
         summary = json.loads((artifact_dir / "summary.json").read_text())
         assert summary["phases"]["implement"]["status"] == "success"
+        assert seen["baseline"] == {"tests/test_doc.sh": "aaaa"}
 
 
 def test_implement_passes_the_dirty_baseline_to_changed_files():

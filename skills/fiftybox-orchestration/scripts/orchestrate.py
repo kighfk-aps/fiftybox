@@ -12,6 +12,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -900,13 +901,20 @@ def repo_snapshot(root: Path) -> set[str]:
 
 
 DIRTY_MISSING = "MISSING"
+UNKNOWN = "UNKNOWN"
 
 
 def _dirty_paths(root: Path) -> list[str]:
-    """Tracked paths that differ from HEAD, staged or not."""
+    """Tracked paths that differ from HEAD, staged or not.
+
+    core.quotePath is forced off so a non-ASCII path comes back as literal
+    UTF-8 rather than octal-escaped (e.g. "한.md" prints as "\\355\\225\\234.md"
+    under the git default). Escaped, the path fails the is_file() check in
+    working_hashes and is silently dropped from changed_files.
+    """
     paths: set[str] = set()
-    for cmd in (["git", "diff", "--name-only"],
-                ["git", "diff", "--cached", "--name-only"]):
+    for cmd in (["git", "-c", "core.quotePath=false", "diff", "--name-only"],
+                ["git", "-c", "core.quotePath=false", "diff", "--cached", "--name-only"]):
         result = run(cmd, root)
         if result.returncode == 0:
             paths.update(line for line in result.stdout.splitlines() if line)
@@ -920,11 +928,21 @@ def working_hashes(root: Path, paths: list[str]) -> dict[str, str]:
     survive `git add`: staging changes the index but not the file's content,
     and a baseline taken before an agent runs must still match afterwards if
     the agent only staged what was already there.
+
+    All present paths are hashed in one `git hash-object` call. If that call
+    exits non-zero, every path in the batch is stamped with a sentinel unique
+    to *this call* (UNKNOWN:<uuid>), not the bare UNKNOWN constant: the same
+    sentinel value must never appear in two different working_hashes() calls,
+    or a hashing failure in the "before" snapshot and another in the "after"
+    snapshot would compare equal and mask a real change as "unchanged" — the
+    same silent-pass failure mode DIRTY_MISSING would have if reused instead
+    of leaving the path absent.
     """
     hashes: dict[str, str] = {}
     present = [p for p in paths if (root / p).is_file()]
+    present_set = set(present)
     for path in paths:
-        if path not in present:
+        if path not in present_set:
             hashes[path] = DIRTY_MISSING
     if present:
         result = run(["git", "hash-object", "--"] + present, root)
@@ -932,6 +950,10 @@ def working_hashes(root: Path, paths: list[str]) -> dict[str, str]:
             # git prints one hash per input path, in the order given.
             for path, line in zip(present, result.stdout.splitlines()):
                 hashes[path] = line.strip()
+        else:
+            sentinel = f"{UNKNOWN}:{uuid.uuid4().hex}"
+            for path in present:
+                hashes[path] = sentinel
     return hashes
 
 
