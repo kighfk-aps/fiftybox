@@ -95,7 +95,7 @@ GPT는 **제1필터**이고 **non-blocking(advisory)**이다. Claude는 GPT 결�
 --model <slug>       # 기본 gpt-5.6-terra
 --effort <level>     # 기본 high
 --timeout <sec>      # 기본 900 (gpt_review.py와 동일)
---out <dir>          # 기본 <artifactDir>/reviews
+--out <dir>          # 필수 — 리뷰 로그 출력 디렉터리 (스킬이 <artifactDir>/reviews를 넘긴다)
 --task-name <name>   # 필수 — 로그 파일명에 쓸 태스크 식별자
 ```
 
