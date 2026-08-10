@@ -2312,3 +2312,94 @@ def test_refresh_merge_worktree_leaves_an_in_progress_merge_alone():
         after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=merge_worktree,
                                capture_output=True, text=True, check=True).stdout.strip()
         assert after == before
+
+
+def test_complete_succeeds_when_local_main_is_behind_origin():
+    """2026-08-10 푸시 거부의 회귀 테스트.
+
+    로컬 main 이 뒤처져 있어도 origin/main 에서 머지하면 push 가 통과한다.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        _push_extra_commit_to_origin(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc == 0
+
+        listed = subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", "origin/main"],
+            cwd=root, capture_output=True, text=True, check=True,
+        ).stdout.split()
+        assert "feature.txt" in listed
+        assert "remote-only.txt" in listed
+
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["status"] == "success"
+        assert summary["phases"]["complete"]["mergeRef"] == "origin/main"
+
+
+def test_complete_aborts_before_committing_when_fetch_fails():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        head_before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                                     capture_output=True, text=True, check=True).stdout.strip()
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", str(Path(tmp) / "gone.git")],
+            cwd=root, check=True,
+        )
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc != 0
+
+        head_after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                                    capture_output=True, text=True, check=True).stdout.strip()
+        assert head_after == head_before   # 커밋이 생기지 않았다
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["status"] == "fetch_failed"
+
+
+def test_complete_without_a_remote_merges_and_moves_local_main():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree = _solo_repo(Path(tmp))
+        artifact_dir = root / "art"
+        (artifact_dir / "logs").mkdir(parents=True)
+        (artifact_dir / "summary.json").write_text(json.dumps({
+            "worktree": str(worktree),
+            "branch": "feature/sim",
+            "artifactDir": str(artifact_dir),
+            "phases": {
+                "setup": {"status": "success"},
+                "implement": {"status": "success", "changedFiles": ["feature.txt"]},
+                "review_test": {"status": "success", "testCommand": "true"},
+            },
+            "finalStatus": "in_progress",
+        }))
+        (worktree / "feature.txt").write_text("work\n")
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc == 0
+
+        listed = subprocess.run(["git", "ls-tree", "-r", "--name-only", "main"],
+                                cwd=root, capture_output=True, text=True,
+                                check=True).stdout.split()
+        assert "feature.txt" in listed
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["pushed"] is False
+        assert summary["phases"]["complete"]["localMainUpdated"] is True
+
+
+def test_complete_reports_local_main_skip_but_still_succeeds_with_a_remote():
+    """origin/main 에 이미 올라갔으므로 로컬 main 갱신 실패는 경고다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        # _sandbox_repo 의 root 는 main 을 체크아웃한 상태라 FF 가 불가능하다.
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc == 0
+
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["localMainUpdated"] is False
+        assert "checked out" in summary["phases"]["complete"]["localMainSkipReason"]

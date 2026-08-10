@@ -2740,6 +2740,18 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
 )
         return 0
 
+    # Resolve the merge target before touching the worktree. The push target
+    # and the merge base must be the same ref, and finding that out after the
+    # commit and merge is what left an orphan merge commit behind.
+    merge_ref, pushable, ref_error = resolve_merge_ref(root)
+    if merge_ref is None:
+        logger.log(ref_error)
+        logger.finish(1, "failed")
+        summary["phases"]["complete"] = phase_record("fetch_failed", logger, error=ref_error)
+        mark_summary_failed(summary, ref_error)
+        write_json(artifact_dir / "summary.json", summary)
+        return fail_json(phase="complete", error=ref_error, artifact_dir=artifact_dir)
+
     # Stage from the worktree's actual state, not the implement phase record.
     # That record only covers the last implement invocation, so anything an
     # earlier run created — or anything written before the first run — would be
@@ -2804,8 +2816,8 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
     merge_worktree = root / ".worktrees" / f"orchestrate-merge-{artifact_dir.name}"
     summary["mergeWorktree"] = str(merge_worktree)
     if not merge_worktree.exists():
-        add_merge_tree = run(["git", "worktree", "add", "--detach", str(merge_worktree), "main"], root)
-        logger.log(f"$ git worktree add --detach {merge_worktree} main")
+        add_merge_tree = run(["git", "worktree", "add", "--detach", str(merge_worktree), merge_ref], root)
+        logger.log(f"$ git worktree add --detach {merge_worktree} {merge_ref}")
         logger.log(add_merge_tree.stdout)
         if add_merge_tree.returncode != 0:
             error = f"merge worktree creation failed: {add_merge_tree.stdout}"
@@ -2814,6 +2826,16 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
             mark_summary_failed(summary, error)
             write_json(artifact_dir / "summary.json", summary)
             return fail_json(phase="complete", error=error, artifact_dir=artifact_dir, exit_code=add_merge_tree.returncode)
+    else:
+        refresh_status, refresh_detail = refresh_merge_worktree(merge_worktree, merge_ref)
+        logger.log(f"existing merge worktree: {refresh_status} ({refresh_detail})")
+        if refresh_status == "failed":
+            error = f"merge worktree could not be re-detached onto {merge_ref}: {refresh_detail}"
+            logger.finish(1, "failed")
+            summary["phases"]["complete"] = phase_record("failed", logger)
+            mark_summary_failed(summary, error)
+            write_json(artifact_dir / "summary.json", summary)
+            return fail_json(phase="complete", error=error, artifact_dir=artifact_dir)
 
     merge_result = run(["git", "merge", branch], merge_worktree)
     logger.log(f"$ git merge {branch}")
@@ -2828,30 +2850,62 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
 
     merged_hash_result = run(["git", "rev-parse", "HEAD"], merge_worktree)
     merged_hash = merged_hash_result.stdout.strip() if merged_hash_result.returncode == 0 else commit_hash
-    push_result = run(["git", "push", "origin", "HEAD:main"], merge_worktree)
-    logger.log("$ git push origin HEAD:main")
-    logger.log(push_result.stdout)
-    if push_result.returncode != 0:
-        error = f"Push failed after detached merge:\n{push_result.stdout}"
-        logger.finish(push_result.returncode, "failed")
-        summary["phases"]["complete"] = phase_record("push_failed", logger)
+    if pushable:
+        push_result = run(["git", "push", "origin", "HEAD:main"], merge_worktree)
+        logger.log("$ git push origin HEAD:main")
+        logger.log(push_result.stdout)
+        if push_result.returncode != 0:
+            error = f"Push failed after detached merge:\n{push_result.stdout}"
+            logger.finish(push_result.returncode, "failed")
+            summary["phases"]["complete"] = phase_record("push_failed", logger)
+            summary["mergedCommit"] = merged_hash
+            mark_summary_failed(summary, error)
+            write_json(artifact_dir / "summary.json", summary)
+            return fail_json(
+                phase="complete",
+                error=error,
+                artifact_dir=artifact_dir,
+                exit_code=push_result.returncode,
+                extra={"mergedCommit": merged_hash, "mergeWorktree": str(merge_worktree)},
+            )
+    else:
+        logger.log("No origin remote; skipping push")
+
+    # Move local main onto the merged commit. With a remote this is a
+    # convenience — origin/main already carries the work. Without one it is
+    # the only destination, so failing to move it leaves an orphan merge.
+    local_main_skip = fast_forward_local_main(root, merged_hash)
+    if local_main_skip:
+        logger.log(f"local main not updated: {local_main_skip}")
+    if local_main_skip and not pushable:
+        error = (
+            "local_main_blocked: nothing was pushed and local main could not be "
+            f"advanced ({local_main_skip}), so the merge commit is unreachable. "
+            f"The work is preserved on branch {branch}."
+        )
+        logger.finish(1, "failed")
+        summary["phases"]["complete"] = phase_record(
+            "local_main_blocked", logger, error=error, mergeRef=merge_ref, pushed=False,
+        )
         summary["mergedCommit"] = merged_hash
         mark_summary_failed(summary, error)
         write_json(artifact_dir / "summary.json", summary)
-        return fail_json(
-            phase="complete",
-            error=error,
-            artifact_dir=artifact_dir,
-            exit_code=push_result.returncode,
-            extra={"mergedCommit": merged_hash, "mergeWorktree": str(merge_worktree)},
-        )
+        return fail_json(phase="complete", error=error, artifact_dir=artifact_dir)
 
     logger.finish(0, "success")
-    summary["phases"]["complete"] = phase_record("success", logger)
+    complete_record: dict[str, Any] = {
+        "mergeRef": merge_ref,
+        "pushed": pushable,
+        "localMainUpdated": local_main_skip is None,
+    }
+    if local_main_skip:
+        complete_record["localMainSkipReason"] = local_main_skip
+    summary["phases"]["complete"] = phase_record("success", logger, **complete_record)
     summary["mergedCommit"] = merged_hash
     write_json(artifact_dir / "summary.json", summary)
-    print(json.dumps({"status": "success", "phase": "complete", "mergedCommit": merged_hash, "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":"))
-)
+    print(json.dumps({"status": "success", "phase": "complete", "mergedCommit": merged_hash,
+                      **complete_record, "artifactDir": str(artifact_dir)},
+                     ensure_ascii=False, separators=(",", ":")))
     return 0
 
 
