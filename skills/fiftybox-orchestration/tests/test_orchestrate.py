@@ -1916,3 +1916,142 @@ class TestRunDesignReviewAgentOverride:
             tmp_path, "zai-coding", "glm-5.2", "PROMPT", 60)
         assert captured["cmd"][0] == "pi"
         assert "zai-coding" in captured["cmd"]
+
+
+# ---------------------------------------------------------------------------
+# dirty_baseline / changed_files — "이번 실행이 바꾼 파일"의 정확한 정의
+#
+# changed_files 는 워크트리가 지금 더러운 파일을 반환했고, 호출부는 그것을
+# 이번 실행의 변경으로 해석했다. Red 페이즈에서 Claude 가 이미 추적 중인
+# 테스트 파일을 고쳐두면 에이전트가 건드리지 않아도 소유권 위반이 났다.
+# ---------------------------------------------------------------------------
+
+def _plain_repo(base: Path) -> Path:
+    """git 저장소 하나. tracked.txt 와 other.txt 가 커밋돼 있다."""
+    root = base / "repo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t")):
+        subprocess.run(["git", "config", key, value], cwd=root, check=True)
+    (root / "tracked.txt").write_text("base\n")
+    (root / "other.txt").write_text("other\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+    return root
+
+
+def test_dirty_baseline_records_modified_tracked_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty\n")
+        baseline = orchestrate.dirty_baseline(root)
+        assert list(baseline) == ["tracked.txt"]
+        assert len(baseline["tracked.txt"]) == 40
+
+
+def test_dirty_baseline_includes_staged_modification():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty\n")
+        subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+        assert "tracked.txt" in orchestrate.dirty_baseline(root)
+
+
+def test_dirty_baseline_ignores_untracked_files():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "brand-new.txt").write_text("new\n")
+        assert orchestrate.dirty_baseline(root) == {}
+
+
+def test_dirty_baseline_marks_deleted_file_missing():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").unlink()
+        assert orchestrate.dirty_baseline(root) == {"tracked.txt": orchestrate.DIRTY_MISSING}
+
+
+def test_dirty_baseline_of_clean_repo_is_empty():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        assert orchestrate.dirty_baseline(root) == {}
+
+
+def test_working_hashes_is_unaffected_by_staging():
+    """git add 는 색인만 바꾼다. 기준선은 스테이징을 건너뛰고 살아남아야 한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty\n")
+        before = orchestrate.working_hashes(root, ["tracked.txt"])
+        subprocess.run(["git", "add", "tracked.txt"], cwd=root, check=True)
+        assert orchestrate.working_hashes(root, ["tracked.txt"]) == before
+
+
+def test_changed_files_excludes_file_dirty_before_the_run():
+    """이번 오탐의 회귀 테스트."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("red phase edit\n")
+        before_files = orchestrate.repo_snapshot(root)
+        before_dirty = orchestrate.dirty_baseline(root)
+
+        (root / "impl.txt").write_text("agent work\n")   # 에이전트가 만든 파일
+
+        got = orchestrate.changed_files(root, before_files, before_dirty)
+        assert got == ["impl.txt"]
+
+
+def test_changed_files_includes_further_edit_to_a_dirty_file():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("red phase edit\n")
+        before_files = orchestrate.repo_snapshot(root)
+        before_dirty = orchestrate.dirty_baseline(root)
+
+        (root / "tracked.txt").write_text("agent clobbered it\n")
+
+        assert orchestrate.changed_files(root, before_files, before_dirty) == ["tracked.txt"]
+
+
+def test_changed_files_detects_revert_of_a_dirty_file():
+    """더러움 → 깨끗함 전이. cmd 가 Claude 의 Red 편집을 되돌린 경우다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("red phase edit\n")
+        before_files = orchestrate.repo_snapshot(root)
+        before_dirty = orchestrate.dirty_baseline(root)
+
+        (root / "tracked.txt").write_text("base\n")   # HEAD 내용으로 복구
+
+        assert orchestrate.changed_files(root, before_files, before_dirty) == ["tracked.txt"]
+
+
+def test_changed_files_includes_clean_file_edited_during_the_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        before_files = orchestrate.repo_snapshot(root)
+        before_dirty = orchestrate.dirty_baseline(root)
+
+        (root / "other.txt").write_text("agent work\n")
+
+        assert orchestrate.changed_files(root, before_files, before_dirty) == ["other.txt"]
+
+
+def test_changed_files_excludes_untracked_file_present_before_the_run():
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "scratch.txt").write_text("pre-existing\n")
+        before_files = orchestrate.repo_snapshot(root)
+        before_dirty = orchestrate.dirty_baseline(root)
+
+        assert orchestrate.changed_files(root, before_files, before_dirty) == []
+
+
+def test_changed_files_without_baseline_keeps_old_behavior():
+    """before_dirty=None 은 기존 호출부의 계약이다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root = _plain_repo(Path(tmp))
+        (root / "tracked.txt").write_text("dirty before\n")
+        before_files = orchestrate.repo_snapshot(root)
+
+        assert orchestrate.changed_files(root, before_files) == ["tracked.txt"]

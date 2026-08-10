@@ -897,13 +897,73 @@ def repo_snapshot(root: Path) -> set[str]:
     return {line for line in result.stdout.splitlines() if line}
 
 
-def changed_files(root: Path, before_files: set[str] | None = None) -> list[str]:
-    diff_result = run(["git", "diff", "--name-only"], root)
-    changed = [line for line in diff_result.stdout.splitlines() if line] if diff_result.returncode == 0 else []
-    cached_result = run(["git", "diff", "--cached", "--name-only"], root)
-    cached = [line for line in cached_result.stdout.splitlines() if line] if cached_result.returncode == 0 else []
+DIRTY_MISSING = "MISSING"
+
+
+def _dirty_paths(root: Path) -> list[str]:
+    """Tracked paths that differ from HEAD, staged or not."""
+    paths: set[str] = set()
+    for cmd in (["git", "diff", "--name-only"],
+                ["git", "diff", "--cached", "--name-only"]):
+        result = run(cmd, root)
+        if result.returncode == 0:
+            paths.update(line for line in result.stdout.splitlines() if line)
+    return sorted(paths)
+
+
+def working_hashes(root: Path, paths: list[str]) -> dict[str, str]:
+    """path -> blob hash of the working-tree file; DIRTY_MISSING when absent.
+
+    Hashing the working tree rather than the index is what lets a baseline
+    survive `git add`: staging changes the index but not the file's content,
+    and a baseline taken before an agent runs must still match afterwards if
+    the agent only staged what was already there.
+    """
+    hashes: dict[str, str] = {}
+    present = [p for p in paths if (root / p).is_file()]
+    for path in paths:
+        if path not in present:
+            hashes[path] = DIRTY_MISSING
+    if present:
+        result = run(["git", "hash-object", "--"] + present, root)
+        if result.returncode == 0:
+            # git prints one hash per input path, in the order given.
+            for path, line in zip(present, result.stdout.splitlines()):
+                hashes[path] = line.strip()
+    return hashes
+
+
+def dirty_baseline(root: Path) -> dict[str, str]:
+    """Content hashes of every tracked file that already differs from HEAD.
+
+    Taken before an agent runs so that changed_files can tell the agent's
+    edits apart from work that was already sitting in the worktree — the Red
+    phase test edits the skill asks Claude to make, most of all. Untracked
+    files are not included here; repo_snapshot already covers those.
+    """
+    return working_hashes(root, _dirty_paths(root))
+
+
+def changed_files(root: Path, before_files: set[str] | None = None,
+                  before_dirty: dict[str, str] | None = None) -> list[str]:
+    """Files this run changed, as repo-relative paths.
+
+    With before_dirty supplied, a tracked file counts as changed only when
+    its content differs from the baseline. Candidates are the union of what
+    is dirty now and what was dirty then: a file the agent reverted to its
+    HEAD content disappears from `git diff` entirely, and that reversion is
+    exactly the TDD violation the review gate exists to catch.
+    """
+    tracked = _dirty_paths(root)
+    if before_dirty is None:
+        changed = tracked
+    else:
+        candidates = sorted(set(tracked) | set(before_dirty))
+        current = working_hashes(root, candidates)
+        changed = [p for p in candidates
+                   if current.get(p) != before_dirty.get(p)]
     untracked = sorted(repo_snapshot(root) - before_files) if before_files is not None else []
-    return sorted(set(changed + cached + untracked))
+    return sorted(set(changed + untracked))
 
 
 def pending_files(root: Path) -> list[str]:
