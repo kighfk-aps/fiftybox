@@ -79,6 +79,22 @@ has "$SKILL" "스코프 위반" "SKILL.md explains the consequence of omitting t
 has "$SKILL" "--skip-codex-review" "SKILL.md passes --skip-codex-review to review-test"
 has "$SKILL" "Codex는 은퇴했다" "SKILL.md states why the Codex review is skipped"
 
+# --- Step 6 GPT advisory diff 리뷰 (2026-08-10 설계) ----------------------
+has "$SKILL" "cc_diff_review.py" "SKILL.md runs the diff review script"
+has "$SKILL" "gpt-5.6-terra" "SKILL.md names the review-tier model"
+has "$SKILL" "advisory" "SKILL.md marks the GPT review as advisory"
+# 리뷰어는 read-only 샌드박스라 테스트를 돌릴 수 없다. 테스트 실행이 GPT로
+# 넘어가면 "통과했다"는 근거 없는 주장을 신뢰하게 된다.
+has "$SKILL" "테스트 실행은 Claude" "SKILL.md keeps test execution with Claude"
+# GPT가 죽어도 파이프라인은 멈추지 않는다
+has "$SKILL" "Claude 폴백" "SKILL.md documents the Claude fallback"
+# 워크트리를 형제 태스크와 공유하므로 pathspec 없는 git diff는 스코프 오탐을 낳는다
+has "$SKILL" "pathspec" "SKILL.md scopes the task diff with a pathspec"
+# 재리뷰가 같은 날 돌면 로그에 -2가 붙는다. 경로를 조립하면 엉뚱한 파일을 읽는다
+has "$SKILL" "reviewPath" "SKILL.md reads the log path from the JSON"
+# 통합 검사는 GPT contract에서 out-of-scope다 — 단일 태스크 리뷰어는 형제를 못 본다
+has "$SKILL" "통합 검사" "SKILL.md keeps the integration check with Claude"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

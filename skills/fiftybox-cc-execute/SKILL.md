@@ -58,6 +58,7 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 | `implement` · simple | `qwen/qwen3.7-flash` |
 | `implement` · complex | `zai-org/glm-5.2` |
 | `deploy` | `qwen/qwen3.7-flash` |
+| `review` (Step 6a advisory) | `gpt-5.6-terra` / effort high |
 
 태스크 분해 단계(Step 3)에서 각 태스크에 `simple` / `complex` tier와 판정 근거
 한 줄을 붙여 `<artifactDir>/task-batches.md`에 남긴다.
@@ -70,6 +71,10 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 **`--model <id>` 오버라이드:** 호출 시 `--model <id>`를 주면 이 표를 무시하고
 implement와 deploy 전 페이즈를 그 모델로 고정한다.
+
+`review` 티어는 CommandCode가 아니라 Codex CLI로 도는 별도 축이라 `--model`
+오버라이드의 영향을 받지 않는다. 바꾸려면 Step 6a 명령의 `--model`을 직접 준다
+(`gpt-5.6-sol`도 가능).
 
 ## 스크립트 경로 경고
 
@@ -221,20 +226,100 @@ Agent 프롬프트에 반드시 포함할 것:
 배치 내 모든 Agent가 끝날 때까지 기다린다. 실패가 있으면 아래「실패 처리」에 따라
 분류하고 대응한다.
 
-### Step 6 — Claude 리뷰 게이트
+### Step 6 — 리뷰 게이트 (6a GPT advisory → 6b Claude 최종)
 
-배치마다 Claude가 직접(서브에이전트 아님) 3단계 리뷰를 한다:
+배치마다 리뷰 게이트를 통과해야 다음 배치로 간다. 검사는 세 항목이고, 담당이
+나뉜다:
 
-1. **테스트 결과** — Step 4에서 쓴 테스트를 전부 돌려 통과를 확인한다. `cmd`가
-   테스트 파일을 수정했다면 되돌리고 재실행한다
-2. **스펙 준수** — `git diff`를 읽고 실제 코드 변경을 태스크 명세와 한 줄씩
-   대조한다. 누락된 요구사항, 범위 밖 작업, 오해가 없는지 본다
-3. **통합 검사** — 병렬 태스크 간 충돌 편집(merge conflict, 중복 정의), 크로스
-   태스크 인터페이스 불일치(함수 시그니처, 공유 타입), 의도치 않은 결합이 없는지
-   확인한다
+| 항목 | 담당 |
+|---|---|
+| ① 테스트 실행·통과 확인 | Claude |
+| ② 스펙 준수 + 테스트 커버리지 적정성 | GPT (advisory) |
+| ③ 통합 검사 (병렬 충돌·크로스 인터페이스) | Claude |
+| findings 검증 + 최종 go/no-go | Claude |
 
-문제가 있으면 해당 태스크에 수정 Agent를 붙이고 테스트 재실행 + 재리뷰를 한다.
-두 번째도 실패하면 사용자에게 선택지를 제시한다.
+**① 테스트 실행은 Claude가 한다.** GPT 리뷰어는 `-s read-only --ephemeral`
+샌드박스에서 프롬프트에 인라인된 텍스트만 보므로 테스트를 실행할 수 없다.
+Step 4에서 쓴 테스트를 전부 돌려 통과를 확인한다. `cmd`가 테스트 파일을
+수정했다면 되돌리고 재실행한다.
+
+**테스트가 실패한 태스크는 6a를 건너뛴다.** 깨진 diff에 리뷰 비용을 쓰지 않고
+곧장 재구현으로 간다.
+
+#### 6a — GPT advisory 리뷰 (자동)
+
+배치가 green이면, 태스크마다 입력 파일 세 개를 만든다:
+
+```bash
+# 태스크가 소유한 파일만 pathspec으로 자른다
+git -C "<worktree>" diff -- <태스크 소유 파일...> > "<artifactDir>/diff-task-N.patch"
+```
+
+그리고 `task-batches.md`의 해당 태스크 절을 발췌해
+`<artifactDir>/spec-task-N.md`로 쓴다.
+
+> **pathspec은 필수다.** 워크트리는 배치 내 형제 태스크와 공유된다. pathspec 없이
+> `git diff`를 뜨면 형제의 변경이 섞여 GPT가 스코프 위반을 오탐한다.
+
+태스크별 독립 프로세스로 detached 병렬 실행한다:
+
+```bash
+nohup python3 ~/.claude/skills/fiftybox-cc-execute/scripts/cc_diff_review.py \
+  --diff "<artifactDir>/diff-task-N.patch" \
+  --spec "<artifactDir>/spec-task-N.md" \
+  --test "<테스트 파일>" \
+  --context "<artifactDir>/design.md" \
+  --task-name "task-N" --out "<artifactDir>/reviews" \
+  --model gpt-5.6-terra --effort high \
+  > "<artifactDir>/gpt-review-task-N.out" 2>&1 &
+```
+
+`.out` 로그를 폴링해 완료를 기다린다(Step 5 detached 패턴과 동일). 마지막 줄이
+stdout JSON이다: `{ok, taskName, diffPath, reviewPath, model, effort, verdict, findingsCount}`.
+
+exit code로 분기한다:
+
+| exit | 의미 | 대응 |
+|---|---|---|
+| 0 | 성공 | `verdict`를 읽고 6b로 |
+| 2 | 인자·경로 오류 | 스킬 버그. 보고하고 해당 태스크 Claude 폴백 |
+| 3 | codex 미설치 또는 shim | stderr 안내를 전달하고 Claude 폴백 |
+| 4 | 모델 슬러그 오류 | stderr의 사용 가능 목록을 제시하고 대체 모델로 재실행 |
+| 5 | 타임아웃 | effort 하향 또는 더 가벼운 모델로 1회 재시도, 실패 시 Claude 폴백 |
+| 6 | codex 실행 실패 | stderr를 전달하고 Claude 폴백 |
+
+#### 6b — Claude 최종 게이트
+
+각 태스크의 JSON `verdict`로 분기한다:
+
+- **`APPROVED`** → ③ 통합 검사만 수행
+- **`REVISE` / `BLOCKED`** → findings를 **검증**한다. GPT 판정을 맹신하지 않는다
+  - 타당하면 → 수정 Agent(`cmd` 재구현)를 붙이고 테스트 재실행 → 6a+6b 재리뷰 1회
+  - 타당하지 않으면(이미 만족한 요구, 오해, 범위 밖 지적) → 기각 사유를 JSON의
+    `reviewPath`가 가리키는 로그 말미에 남기고 ③으로 간다
+- **`UNKNOWN`** → contract를 벗어난 응답이다. 판정으로 취급하지 않고 Claude 폴백
+- `findingsCount`가 0인데 판정이 `REVISE`/`BLOCKED`면 요약을 믿지 말고
+  `reviewPath` 원문을 직접 읽는다
+
+> 로그 경로를 직접 조립하지 않는다. 같은 날 재리뷰가 돌면 `-2`가 붙으므로 반드시
+> JSON의 `reviewPath`를 쓴다.
+
+**③ 통합 검사는 항상 Claude가 한다.** 병렬 태스크 간 충돌 편집(merge conflict,
+중복 정의), 크로스 태스크 인터페이스 불일치(함수 시그니처, 공유 타입), 의도치 않은
+결합을 본다. 이 항목은 GPT contract에서 명시적으로 out-of-scope다 — 단일 태스크
+리뷰어는 형제 태스크를 보지 못한다.
+
+#### Claude 폴백
+
+**GPT 리뷰는 절약 기회이지 필수가 아니다.** 실패하거나 사용 불가면 해당 태스크는
+Claude가 기존 방식(`git diff`를 명세와 직접 대조)으로 검사한다. 파이프라인은 GPT
+때문에 멈추지 않는다.
+
+폴백은 **태스크 국소**다. 한 태스크의 GPT 리뷰가 죽어도 형제 태스크는 GPT로 계속
+간다.
+
+GPT-driven 재구현이 재리뷰에서도 같은 blocking 지적을 받으면 사용자에게 선택지를
+제시한다 — 기존 "두 번째 실패 시 사용자 보고" 규칙과 같다.
 
 문제가 없으면 다음 배치로 넘어가 Step 4~6을 반복하거나, 배치가 전부 끝났으면
 Step 7로 간다.
@@ -255,6 +340,9 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 판정과 지적 목록을 낸다. 파이프라인을 멈추지는 않지만 매 실행마다 리뷰 비용이
 들고, 설계 문서의 범위 절과 어긋나는 파일을 스코프 위반으로 지적해 불필요한
 대응을 유발한다.
+
+Step 6a의 GPT diff 리뷰와는 별개다. 은퇴시킨 것은 orchestrate의 **설계·스펙**
+advisory 리뷰이고, 6a는 cc-execute가 자체 스크립트로 도는 **구현 diff** 리뷰다.
 
 첫 실패 시 실패한 태스크의 Phase 5를 실패 출력을 피드백으로 **1회 자동
 재시도**한다:
@@ -385,5 +473,11 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 - **병렬:** Claude가 매 배치를 리뷰한 뒤에만 다음 배치를 시작한다
 - **TDD:** `cmd`는 Claude가 쓴 테스트 파일을 수정하지 않는다. 수정했다면 되돌린
   뒤 리뷰한다
+- **GPT 리뷰(Step 6a)는 advisory(non-blocking)다.** 판정이 파이프라인을 멈추지 않는다
+- **GPT 판정을 맹신하지 않는다.** Claude가 findings를 검증하고 최종 go/no-go를 낸다.
+  테스트 실행과 통합 검사는 Claude가 유지한다
+- GPT 리뷰어는 read-only 샌드박스라 파일을 수정할 수도, 테스트를 실행할 수도 없다
+- **GPT 실패 시 자동 Claude 폴백.** GPT-driven 재구현도 `cmd`가 수행한다 — Claude가
+  직접 고치지 않는다. 자동 재구현은 태스크당 1회
 - **⛔ Claude는 계획서 내용, 속도, 모델 가용성과 무관하게 구현 코드를 직접 쓰지
   않는다. 이 규칙 위반은 치명적 실패다**
