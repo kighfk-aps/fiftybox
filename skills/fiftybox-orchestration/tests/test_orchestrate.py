@@ -2403,3 +2403,16 @@ def test_complete_reports_local_main_skip_but_still_succeeds_with_a_remote():
         summary = json.loads((artifact_dir / "summary.json").read_text())
         assert summary["phases"]["complete"]["localMainUpdated"] is False
         assert "checked out" in summary["phases"]["complete"]["localMainSkipReason"]
+
+
+def test_has_failed_phase_recognizes_fetch_failed_and_local_main_blocked():
+    """fetch_failed / local_main_blocked must count as failure statuses.
+
+    Otherwise phase_cleanup's has_failed_phase check flips finalStatus back
+    to "success" after either of these, hiding an unreachable merge commit.
+    """
+    fetch_failed_summary = {"phases": {"complete": {"status": "fetch_failed"}}}
+    assert orchestrate.has_failed_phase(fetch_failed_summary) is True
+
+    local_main_blocked_summary = {"phases": {"complete": {"status": "local_main_blocked"}}}
+    assert orchestrate.has_failed_phase(local_main_blocked_summary) is True

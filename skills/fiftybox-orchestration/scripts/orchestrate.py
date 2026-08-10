@@ -45,6 +45,8 @@ FAILED_PHASE_STATUSES = {
     "blocked",
     "deploy_failed",
     "failed",
+    "fetch_failed",
+    "local_main_blocked",
     "merge_conflict",
     "no_changes",
     "partial_failure",
