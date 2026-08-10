@@ -2135,3 +2135,180 @@ def test_implement_passes_the_dirty_baseline_to_changed_files():
             orchestrate.phase_implement(Path(tmp), artifact_dir, args)
 
         assert seen["baseline"] == {"a.txt": "bbbb"}
+
+
+# ---------------------------------------------------------------------------
+# 머지 기준 — 머지하는 ref 와 미는 ref 가 같아야 한다
+#
+# phase_complete 는 로컬 main 에서 머지 워크트리를 뜨고 origin/main 으로 밀었다.
+# 로컬 main 이 뒤처져 있으면 커밋과 머지를 다 마친 뒤 push 가 거부됐다.
+# ---------------------------------------------------------------------------
+
+def _push_extra_commit_to_origin(base: Path) -> None:
+    """다른 클론에서 origin/main 을 앞서게 만든다 — 로컬 main 이 뒤처지는 상황."""
+    other = base / "other"
+    subprocess.run(["git", "clone", "-q", str(base / "origin.git"), str(other)], check=True)
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t")):
+        subprocess.run(["git", "config", key, value], cwd=other, check=True)
+    (other / "remote-only.txt").write_text("remote work\n")
+    subprocess.run(["git", "add", "-A"], cwd=other, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "remote work"], cwd=other, check=True)
+    subprocess.run(["git", "push", "-q", "origin", "main"], cwd=other, check=True)
+
+
+def _solo_repo(base: Path) -> tuple[Path, Path]:
+    """원격 없는 저장소. root 는 parked 브랜치에 있어 main 이 비어 있다."""
+    root = base / "solo"
+    root.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(root)], check=True)
+    for key, value in (("user.email", "t@example.com"), ("user.name", "t")):
+        subprocess.run(["git", "config", key, value], cwd=root, check=True)
+    (root / "tracked.txt").write_text("base\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=root, check=True)
+    worktree = root / ".worktrees" / "wt"
+    subprocess.run(
+        ["git", "worktree", "add", "-q", "-b", "feature/sim", str(worktree), "main"],
+        cwd=root, check=True,
+    )
+    subprocess.run(["git", "checkout", "-q", "-b", "parked"], cwd=root, check=True)
+    return root, worktree
+
+
+def test_resolve_merge_ref_uses_origin_main_when_a_remote_exists():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        assert orchestrate.resolve_merge_ref(root) == ("origin/main", True, "")
+
+
+def test_resolve_merge_ref_falls_back_to_local_main_without_a_remote():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree = _solo_repo(Path(tmp))
+        assert orchestrate.resolve_merge_ref(root) == ("main", False, "")
+
+
+def test_resolve_merge_ref_reports_a_fetch_failure():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        subprocess.run(
+            ["git", "remote", "set-url", "origin", str(Path(tmp) / "gone.git")],
+            cwd=root, check=True,
+        )
+        ref, pushable, error = orchestrate.resolve_merge_ref(root)
+        assert ref is None
+        assert pushable is True
+        assert "fetch" in error
+
+
+def test_resolve_merge_ref_uses_local_main_when_the_remote_has_no_main():
+    """빈 원격에 처음 미는 경우 — 머지 기준은 로컬 main, 푸시는 시도한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        base = Path(tmp)
+        subprocess.run(["git", "init", "-q", "--bare", str(base / "empty.git")], check=True)
+        root, _worktree = _solo_repo(base)
+        subprocess.run(
+            ["git", "remote", "add", "origin", str(base / "empty.git")],
+            cwd=root, check=True,
+        )
+        assert orchestrate.resolve_merge_ref(root) == ("main", True, "")
+
+
+def test_main_is_checked_out_detects_the_clone_root():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        assert orchestrate.main_is_checked_out(root) is True
+
+
+def test_main_is_checked_out_false_when_parked_elsewhere():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree = _solo_repo(Path(tmp))
+        assert orchestrate.main_is_checked_out(root) is False
+
+
+def test_fast_forward_local_main_moves_the_branch():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree = _solo_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feature"], cwd=worktree, check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+        assert orchestrate.fast_forward_local_main(root, head) is None
+
+        moved = subprocess.run(["git", "rev-parse", "main"], cwd=root,
+                               capture_output=True, text=True, check=True).stdout.strip()
+        assert moved == head
+
+
+def test_fast_forward_local_main_skips_when_main_is_checked_out():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        assert orchestrate.fast_forward_local_main(root, head) == \
+            "main is checked out in a worktree"
+
+
+def test_fast_forward_local_main_skips_a_non_fast_forward():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree = _solo_repo(Path(tmp))
+        # main 을 앞세워 두면 워크트리 커밋은 더 이상 FF 가 아니다.
+        (root / "parked.txt").write_text("diverged\n")
+        subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "diverge"], cwd=root, check=True)
+        subprocess.run(["git", "branch", "-f", "main", "parked"], cwd=root, check=True)
+
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        reason = orchestrate.fast_forward_local_main(root, head)
+        assert reason == "local main is not an ancestor of the merged commit"
+
+
+def test_refresh_merge_worktree_re_detaches_onto_the_merge_ref():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        _push_extra_commit_to_origin(Path(tmp))
+        subprocess.run(["git", "fetch", "-q", "origin"], cwd=root, check=True)
+
+        merge_worktree = root / ".worktrees" / "merge"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(merge_worktree), "main"],
+            cwd=root, check=True,
+        )
+
+        status, _detail = orchestrate.refresh_merge_worktree(merge_worktree, "origin/main")
+        assert status == "refreshed"
+
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=merge_worktree,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        target = subprocess.run(["git", "rev-parse", "origin/main"], cwd=root,
+                                capture_output=True, text=True, check=True).stdout.strip()
+        assert head == target
+
+
+def test_refresh_merge_worktree_leaves_an_in_progress_merge_alone():
+    with tempfile.TemporaryDirectory() as tmp:
+        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        merge_worktree = root / ".worktrees" / "merge"
+        subprocess.run(
+            ["git", "worktree", "add", "-q", "--detach", str(merge_worktree), "main"],
+            cwd=root, check=True,
+        )
+        # 충돌하는 두 브랜치를 만들어 MERGE_HEAD 를 남긴다.
+        subprocess.run(["git", "checkout", "-q", "-b", "left"], cwd=merge_worktree, check=True)
+        (merge_worktree / "tracked.txt").write_text("left\n")
+        subprocess.run(["git", "commit", "-qam", "left"], cwd=merge_worktree, check=True)
+        subprocess.run(["git", "checkout", "-q", "-b", "right", "main"], cwd=merge_worktree, check=True)
+        (merge_worktree / "tracked.txt").write_text("right\n")
+        subprocess.run(["git", "commit", "-qam", "right"], cwd=merge_worktree, check=True)
+        subprocess.run(["git", "merge", "left"], cwd=merge_worktree,
+                       capture_output=True)   # 충돌로 실패한다 — MERGE_HEAD 가 남는다
+
+        before = subprocess.run(["git", "rev-parse", "HEAD"], cwd=merge_worktree,
+                                capture_output=True, text=True, check=True).stdout.strip()
+        status, _detail = orchestrate.refresh_merge_worktree(merge_worktree, "main")
+        assert status == "in_progress"
+        after = subprocess.run(["git", "rev-parse", "HEAD"], cwd=merge_worktree,
+                               capture_output=True, text=True, check=True).stdout.strip()
+        assert after == before

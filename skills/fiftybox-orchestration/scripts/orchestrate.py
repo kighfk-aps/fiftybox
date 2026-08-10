@@ -966,6 +966,74 @@ def changed_files(root: Path, before_files: set[str] | None = None,
     return sorted(set(changed + untracked))
 
 
+def resolve_merge_ref(root: Path) -> tuple[str | None, bool, str]:
+    """(merge ref, pushable, error). A None ref means: stop before committing.
+
+    The ref a run merges into and the ref it pushes to must be the same one.
+    Merging local main while pushing origin/main is what makes a stale local
+    main reject the push only after the commit and the merge already happened.
+    """
+    remote = run(["git", "remote", "get-url", "origin"], root)
+    if remote.returncode != 0:
+        return "main", False, ""
+    fetched = run(["git", "fetch", "origin"], root)
+    if fetched.returncode != 0:
+        return None, True, f"git fetch origin failed: {fetched.stdout.strip()}"
+    verified = run(["git", "rev-parse", "--verify", "origin/main"], root)
+    if verified.returncode != 0:
+        # The remote exists but carries no main yet — this is the first push.
+        return "main", True, ""
+    return "origin/main", True, ""
+
+
+def main_is_checked_out(root: Path) -> bool:
+    """True when any worktree has refs/heads/main checked out.
+
+    An unreadable worktree list answers True: the caller only uses this to
+    decide whether moving the branch is safe, and refusing to move it is the
+    harmless answer.
+    """
+    result = run(["git", "worktree", "list", "--porcelain"], root)
+    if result.returncode != 0:
+        return True
+    return any(line.strip() == "branch refs/heads/main"
+               for line in result.stdout.splitlines())
+
+
+def fast_forward_local_main(root: Path, commit: str) -> str | None:
+    """Move local main to `commit`; return a reason string when skipped.
+
+    None means the branch moved. Callers treat a skip as fatal only when
+    there is no remote, because then local main was the sole destination and
+    the merge commit would otherwise be unreachable.
+    """
+    if main_is_checked_out(root):
+        return "main is checked out in a worktree"
+    ancestor = run(["git", "merge-base", "--is-ancestor", "main", commit], root)
+    if ancestor.returncode != 0:
+        return "local main is not an ancestor of the merged commit"
+    updated = run(["git", "branch", "-f", "main", commit], root)
+    if updated.returncode != 0:
+        return f"git branch -f main failed: {updated.stdout.strip()}"
+    return None
+
+
+def refresh_merge_worktree(merge_worktree: Path, merge_ref: str) -> tuple[str, str]:
+    """Re-detach a leftover merge worktree onto merge_ref.
+
+    A merge worktree that survived an earlier failed run still sits on the
+    base that run used. Reusing it as-is repeats the failure. A worktree with
+    MERGE_HEAD is someone resolving a conflict, so it is left untouched.
+    """
+    merge_head = run(["git", "rev-parse", "--verify", "MERGE_HEAD"], merge_worktree)
+    if merge_head.returncode == 0:
+        return "in_progress", "MERGE_HEAD present; base left untouched"
+    result = run(["git", "checkout", "--detach", merge_ref], merge_worktree)
+    if result.returncode != 0:
+        return "failed", result.stdout.strip()
+    return "refreshed", merge_ref
+
+
 def pending_files(root: Path) -> list[str]:
     """Every path in the worktree that differs from HEAD, new files included.
 
