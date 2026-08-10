@@ -46,7 +46,7 @@ has "$SKILL" "name: fiftybox-cc-execute" "SKILL.md frontmatter declares its name
 # --- 필수 계약 ----------------------------------------------------------
 has "$SKILL" "--implement-agent commandcode" "SKILL.md dispatches via --implement-agent commandcode"
 has "$SKILL" "cc_preflight.py" "SKILL.md runs the preflight script"
-has "$SKILL" "deepseek/deepseek-v4-flash" "SKILL.md names the simple-tier model"
+has "$SKILL" "qwen/qwen3.7-flash" "SKILL.md names the simple-tier model"
 has "$SKILL" "zai-org/glm-5.2" "SKILL.md names the complex-tier model"
 has "$SKILL" "--skip-verify" "SKILL.md passes --skip-verify to implement"
 has "$SKILL" "nohup" "SKILL.md requires detached implement runs"

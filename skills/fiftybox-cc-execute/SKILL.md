@@ -55,9 +55,9 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 | 대상 | 모델 |
 |---|---|
-| `implement` · simple | `deepseek/deepseek-v4-flash` |
+| `implement` · simple | `qwen/qwen3.7-flash` |
 | `implement` · complex | `zai-org/glm-5.2` |
-| `deploy` | `deepseek/deepseek-v4-flash` |
+| `deploy` | `qwen/qwen3.7-flash` |
 
 태스크 분해 단계(Step 3)에서 각 태스크에 `simple` / `complex` tier와 판정 근거
 한 줄을 붙여 `<artifactDir>/task-batches.md`에 남긴다.
@@ -88,7 +88,7 @@ implement와 deploy 전 페이즈를 그 모델로 고정한다.
 
 ```bash
 python3 ~/.claude/skills/fiftybox-cc-execute/scripts/cc_preflight.py \
-  --require-model deepseek/deepseek-v4-flash \
+  --require-model qwen/qwen3.7-flash \
   --require-model zai-org/glm-5.2
 ```
 
@@ -298,7 +298,7 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<작업>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent commandcode --model deepseek/deepseek-v4-flash
+  --implement-agent commandcode --model qwen/qwen3.7-flash
 ```
 
 `--implement-agent`는 implement뿐 아니라 deploy 페이즈에도 같은 에이전트를
