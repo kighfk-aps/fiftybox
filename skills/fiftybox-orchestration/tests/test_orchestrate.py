@@ -871,12 +871,13 @@ def test_phase_implement_runs_one_pi_call_per_task(tmp_path):
     )
     call_count = [0]
 
-    def fake_changed_files(_root, _before):
+    def fake_changed_files(_root, _before=None, _before_dirty=None):
         call_count[0] += 1
         return [f"src/task{call_count[0] - 1}.py"]
 
     with patch("orchestrate.run", return_value=ok_result) as mock_run, \
          patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.dirty_baseline", return_value={}), \
          patch("orchestrate.changed_files", side_effect=fake_changed_files):
         rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
     assert rc == 0
@@ -924,13 +925,14 @@ def test_phase_implement_stops_on_task_failure(tmp_path):
 
     call_count = {"count": 0}
 
-    def fake_changed_files(_root, _before):
+    def fake_changed_files(_root, _before=None, _before_dirty=None):
         result = [f"src/changed{call_count['count']}.py"]
         call_count["count"] += 1
         return result
 
     with patch("orchestrate.run", side_effect=[ok_result, fail_result]) as mock_run, \
          patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.dirty_baseline", return_value={}), \
          patch("orchestrate.changed_files", side_effect=fake_changed_files):
         rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
 
@@ -992,12 +994,13 @@ def test_phase_implement_retry_resumes_from_failed_task(tmp_path):
     ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="OK")
     call_count = [0]
 
-    def fake_changed_files(_root, _before=None):
+    def fake_changed_files(_root, _before=None, _before_dirty=None):
         call_count[0] += 1
         return [f"src/changed{call_count[0]}.py"]
 
     with patch("orchestrate.run", return_value=ok_result) as mock_run, \
          patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.dirty_baseline", return_value={}), \
          patch("orchestrate.changed_files", side_effect=fake_changed_files):
         rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
 
@@ -1044,6 +1047,7 @@ def test_phase_implement_sequential_timeout_records_index(tmp_path):
 
     with patch("orchestrate.run", side_effect=subprocess.TimeoutExpired(cmd=[], timeout=3)), \
          patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.dirty_baseline", return_value={}), \
          patch("orchestrate.changed_files", return_value=[]):
         rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
 
@@ -1080,12 +1084,13 @@ def test_phase_implement_sequential_writes_aggregate_log(tmp_path):
     files_per_task = [["src/a.py"], ["src/b.py", "lib/helper.py"]]
     call_idx = [-1]
 
-    def fake_changed_files(_root, _before):
+    def fake_changed_files(_root, _before=None, _before_dirty=None):
         call_idx[0] += 1
         return files_per_task[call_idx[0]]
 
     with patch("orchestrate.run", return_value=ok_result), \
          patch("orchestrate.repo_snapshot", return_value={"src/app.py"}), \
+         patch("orchestrate.dirty_baseline", return_value={}), \
          patch("orchestrate.changed_files", side_effect=fake_changed_files):
         rc = orchestrate.phase_implement(tmp_path, artifact_dir, args)
 
@@ -2055,3 +2060,78 @@ def test_changed_files_without_baseline_keeps_old_behavior():
         before_files = orchestrate.repo_snapshot(root)
 
         assert orchestrate.changed_files(root, before_files) == ["tracked.txt"]
+
+
+def test_pre_existing_dirty_tracked_file_is_not_an_ownership_violation():
+    """2026-08-10 cc-execute 실패의 회귀 테스트.
+
+    Claude 가 Red 페이즈에서 추적 중인 테스트 파일을 고쳐두면, 에이전트가
+    자기 소유 파일만 건드려도 implement 가 소유권 위반으로 죽었다.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        artifact_dir = Path(tmp) / "art"
+        (artifact_dir / "logs").mkdir(parents=True)
+        (artifact_dir / "summary.json").write_text(json.dumps({
+            "worktree": str(Path(tmp) / "wt"),
+            "branch": "feature/sim",
+            "phases": {"setup": {"status": "success"}},
+        }))
+        (artifact_dir / "design.md").write_text("# design\n")
+        (artifact_dir / "task-batches.md").write_text(
+            "```json\n" + json.dumps({"tasks": [{
+                "name": "Task A",
+                "description": "edit only the owned file",
+                "files": ["src/owned.py"],
+            }]}) + "\n```\n"
+        )
+        (Path(tmp) / "wt").mkdir()
+
+        args = orchestrate.parse_args([
+            "--phase", "implement", "--task", "build feature",
+            "--artifact-dir", str(artifact_dir), "--skip-verify",
+        ])
+        ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="Done.\n")
+
+        with patch("orchestrate.run", return_value=ok_result), \
+             patch("orchestrate.repo_snapshot", return_value=set()), \
+             patch("orchestrate.dirty_baseline",
+                   return_value={"tests/test_doc.sh": "aaaa"}), \
+             patch("orchestrate.changed_files", return_value=["src/owned.py"]):
+            rc = orchestrate.phase_implement(Path(tmp), artifact_dir, args)
+
+        assert rc == 0
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["implement"]["status"] == "success"
+
+
+def test_implement_passes_the_dirty_baseline_to_changed_files():
+    """배선 검증: 기준선을 뜨고도 넘기지 않으면 오탐이 그대로 재발한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        artifact_dir = Path(tmp) / "art"
+        (artifact_dir / "logs").mkdir(parents=True)
+        (artifact_dir / "summary.json").write_text(json.dumps({
+            "worktree": str(Path(tmp) / "wt"),
+            "branch": "feature/sim",
+            "phases": {"setup": {"status": "success"}},
+        }))
+        (artifact_dir / "design.md").write_text("# design\n")
+        (Path(tmp) / "wt").mkdir()
+
+        args = orchestrate.parse_args([
+            "--phase", "implement", "--task", "build feature",
+            "--artifact-dir", str(artifact_dir), "--skip-verify",
+        ])
+        ok_result = subprocess.CompletedProcess(args=[], returncode=0, stdout="Done.\n")
+        seen = {}
+
+        def spy_changed_files(_root, _before=None, _before_dirty=None):
+            seen["baseline"] = _before_dirty
+            return ["src/app.py"]
+
+        with patch("orchestrate.run", return_value=ok_result), \
+             patch("orchestrate.repo_snapshot", return_value=set()), \
+             patch("orchestrate.dirty_baseline", return_value={"a.txt": "bbbb"}), \
+             patch("orchestrate.changed_files", side_effect=spy_changed_files):
+            orchestrate.phase_implement(Path(tmp), artifact_dir, args)
+
+        assert seen["baseline"] == {"a.txt": "bbbb"}

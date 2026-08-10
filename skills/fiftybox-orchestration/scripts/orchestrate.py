@@ -2029,8 +2029,11 @@ def _implement_sequential(
         prompt_path = artifact_dir / f"implement-prompt-task-{idx}.md"
         prompt_path.write_text(task_prompt, encoding="utf-8")
 
-        # Snapshot repo before this task
+        # Snapshot repo before this task. The hash baseline is what keeps a
+        # file that was already dirty — a Red phase test edit, typically —
+        # from being attributed to this agent.
         before_files = repo_snapshot(worktree)
+        before_dirty = dirty_baseline(worktree)
 
         # Build agent command
         try:
@@ -2067,7 +2070,7 @@ def _implement_sequential(
         except subprocess.TimeoutExpired as exc:
             logger.log(f"[TASK {idx}] Timeout ({args.implementation_timeout}s)")
             # Capture whatever the subprocess managed to write before timing out
-            timeout_changed = changed_files(worktree, before_files)
+            timeout_changed = changed_files(worktree, before_files, before_dirty)
             if declared_files and timeout_changed:
                 declared_norm = {str(PurePosixPath(f)) for f in declared_files}
                 t_violations = [f for f in timeout_changed if str(PurePosixPath(f)) not in declared_norm]
@@ -2101,7 +2104,7 @@ def _implement_sequential(
                 extra={"failed_task_index": idx},
             )
 
-        task_changed = changed_files(worktree, before_files)
+        task_changed = changed_files(worktree, before_files, before_dirty)
         task_succeeded = result_proc.returncode == 0
 
         # Enforce file ownership: if declared_files is non-empty, fail on any violation.
@@ -2372,6 +2375,7 @@ Working directory: {worktree}
         return 0
 
     before_files = repo_snapshot(worktree)
+    before_dirty = dirty_baseline(worktree)
     agent_config = agent_config_pre
     adapters_dir = SKILL_DIR / "adapters"
     agent_name = agent_config["implement_agent"]
@@ -2402,7 +2406,7 @@ Working directory: {worktree}
         write_json(artifact_dir / "summary.json", summary)
         return fail_json(phase="implement", error=result_proc.stdout[-2000:], artifact_dir=artifact_dir, exit_code=result_proc.returncode)
 
-    all_changed = changed_files(worktree, before_files)
+    all_changed = changed_files(worktree, before_files, before_dirty)
     log_content = "# Implementation Log\n\n## Changed Files\n\n"
     log_content += "".join(f"- {path}\n" for path in all_changed) or "- (none)\n"
     log_content += f"\n## {agent_name} Output\n\n```\n{result_proc.stdout[-5000:]}\n```\n"
