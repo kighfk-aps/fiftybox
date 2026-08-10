@@ -114,17 +114,26 @@ untracked 파일은 담지 않는다 — 그쪽은 `repo_snapshot`이 이미 처
 `git checkout --detach <mergeRef>`로 기준을 갱신한다. `MERGE_HEAD`가 있으면
 사용자가 충돌을 해결하는 중이므로 건드리지 않고 로그만 남긴다.
 
-### ③ 푸시 성공 후 로컬 main fast-forward
+### ③ 머지 성공 후 로컬 main fast-forward
 
-세 조건을 모두 만족할 때만 `git branch -f main <merged>`:
+머지가 성공한 뒤(원격이 있으면 푸시까지 성공한 뒤) 두 조건을 모두 만족할 때
+`git branch -f main <merged>`:
 
-- 푸시가 성공했고
 - 어느 워크트리에서도 `main`이 체크아웃돼 있지 않고
   (`git worktree list --porcelain`에 `branch refs/heads/main`이 없음)
 - `git merge-base --is-ancestor main <merged>`가 참 — 진짜 fast-forward
 
-하나라도 어긋나면 **경고만** 남기고 성공으로 끝낸다. main 갱신 실패가 이미 푸시된
-작업을 실패로 만들어선 안 된다.
+**건너뛴 경우의 처리는 원격 유무로 갈린다:**
+
+- **원격 있음** — `origin/main`에 이미 작업이 올라갔으므로 **경고만** 남기고
+  성공으로 끝낸다. 로컬 main 갱신 실패가 이미 푸시된 작업을 실패로 만들어선 안 된다
+- **원격 없음** — 푸시가 없었으므로 로컬 main이 유일한 도착지다. 갱신하지 못하면
+  머지 커밋은 아무 브랜치도 가리키지 않는 고아가 되고 main은 그대로다. 이때는
+  `local_main_blocked`로 **실패** 처리한다. 작업 자체는 작업 브랜치에 남아 있고
+  cleanup의 `git branch -d`는 머지되지 않은 브랜치를 거부하므로 유실되지 않는다
+
+원격 없는 리포에서 머지 기준이 로컬 main이라는 점 때문에, 이 경우 FF는 거의 항상
+성립한다 — 성립하지 않는 유일한 경우가 main 체크아웃 중일 때다.
 
 ### 결과 JSON
 
@@ -139,6 +148,9 @@ untracked 파일은 담지 않는다 — 그쪽은 `repo_snapshot`이 이미 처
 - `main_is_checked_out(root) -> bool`
 - `fast_forward_local_main(root, commit) -> str | None` — `None`이면 갱신됨,
   문자열이면 건너뛴 사유
+- `refresh_merge_worktree(merge_worktree, merge_ref) -> tuple[str, str]` —
+  `("refreshed" | "in_progress" | "failed", detail)`. 낡은 머지 워크트리를
+  `merge_ref`로 다시 detach하되 `MERGE_HEAD`가 있으면 `in_progress`로 보존한다
 
 ### 버린 대안
 
