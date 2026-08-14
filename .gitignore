@@ -15,3 +15,6 @@ skills/fiftybox-local*.md
 # Generated local diagrams/previews
 fiftybox-structure.html
 fiftybox-structure.png
+
+# CommandCode local agent state
+.commandcode/
