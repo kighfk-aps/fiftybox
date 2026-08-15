@@ -104,8 +104,9 @@ done
 
 ### Step 1-4: 설계 수집, Setup, 태스크 분해
 
-`fiftybox-free-execute`와 동일 — 단, 태스크 분해는 배치 크기가 **후보 모델 수**에
-좌우되므로 **배치 단위**로 만든다(순수 순차 목록이 아니다):
+설계 문서를 확인하고, Phase 0 setup을 거쳐 태스크를 분해하는 표준 절차를
+따른다 — 단, 태스크 분해는 배치 크기가 **후보 모델 수**에 좌우되므로
+**배치 단위**로 만든다(순수 순차 목록이 아니다):
 
 ```markdown
 ## Task Batches (동적 병렬 — 후보 3개 기준 예시)
@@ -121,8 +122,7 @@ done
 
 ### Step 5: Claude가 테스트 작성 (Red)
 
-`fiftybox-free-execute`의 Step 6과 동일(라운드의 각 태스크에 대해 병렬로
-작성).
+실패하는 테스트를 라운드의 각 태스크에 대해 병렬로 작성한다(Red).
 
 ### Step 6: 구현 (Green) — 라운드 병렬
 
@@ -142,17 +142,17 @@ nohup python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 ### Step 7: Claude 리뷰 게이트
 
-`fiftybox-free-execute`의 Step 8과 동일(테스트 결과 → 테스트 무력화 검사 →
-명세 준수 → 통합 확인). 문제 없으면 다음 라운드로(Step 5-7 반복), 라운드가
-모두 끝났으면 Step 8로.
+테스트 결과 확인 → 테스트 무력화 검사 → 명세 준수 확인 → 통합 확인 순서로
+진행한다. 문제 없으면 다음 라운드로(Step 5-7 반복), 라운드가 모두 끝났으면
+Step 8로.
 
 Advisory diff 리뷰는 `fiftybox-execute`와 동일한 자연어 opt-in 트리거를
 따른다(`~/.claude/skills/fiftybox-execute/scripts/diff_review.py` 재사용).
 
 ### Step 8-11: Review+Test, Complete, Deploy, Cleanup
 
-`fiftybox-free-execute`의 Step 9-12와 동일 — `--implement-agent`/`--model`을
-실패한 태스크에 배정됐던 값으로 재시도한다.
+표준 review-test → complete → deploy → cleanup 절차를 따른다 —
+`--implement-agent`/`--model`을 실패한 태스크에 배정됐던 값으로 재시도한다.
 
 ## 모델 소진 처리
 
@@ -162,7 +162,7 @@ Advisory diff 리뷰는 `fiftybox-execute`와 동일한 자연어 opt-in 트리�
 
 ## 안전 계약
 
-`fiftybox-free-execute`/`fiftybox-execute`와 동일 — Claude는 구현 코드를
+`fiftybox-execute`와 동일한 계약 — Claude는 구현 코드를
 직접 쓰지 않는다, provider는 테스트 파일을 수정하지 않는다, force
 push/reset hard/branch -D 금지, Phase 7 이전 push 금지, 자동 재시도는
 태스크당 1회, 실패 시 선택지 제시.
