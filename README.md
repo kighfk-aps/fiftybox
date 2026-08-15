@@ -68,15 +68,14 @@ cd fiftybox && ./install.sh
 
 ### Commands
 
-fiftybox ships six slash commands:
+fiftybox ships five slash commands:
 
 | Command | What it does |
 |---------|--------------|
 | `/fiftybox-orchestration` | Full pipeline: explore → clarify → design → implement → review → commit → push |
 | `/fiftybox-plans` | Planning front half only — produces a saved Markdown plan for later handoff |
-| `/fiftybox-execute` | Parallel-batch TDD execution with Pi CLI as the implementer |
-| `/fiftybox-free-execute` | Sequential TDD execution on opencode free-tier models |
-| `/fiftybox-cc-execute` | Parallel-batch TDD execution with the CommandCode (`cmd`) CLI as the implementer |
+| `/fiftybox-execute` | Parallel-batch TDD execution — Claude writes tests, a chosen provider (opencode-go/commandcode/pi/grok) implements in parallel, Claude reviews |
+| `/fiftybox-local` | Dynamic-parallel TDD execution on free/local providers (opencode free tier, Modal Qwen3.8-27B) — parallelism scales with the number of healthy models discovered at run time |
 | `/fiftybox-gpt-review` | Reviews a design or plan document with Codex GPT models |
 
 ### Flags

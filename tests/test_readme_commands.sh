@@ -11,10 +11,10 @@ pass() { echo "PASS: $1"; PASS=$(( PASS + 1 )); }
 fail() { echo "FAIL: $1"; FAIL=$(( FAIL + 1 )); }
 
 # Every command file install.sh copies unconditionally must appear in README.
-# The gitignored fiftybox-local* commands are excluded on purpose — a clean
-# checkout does not ship them.
+# The gitignored fiftybox-local-execute* commands are excluded on purpose — a
+# clean checkout does not ship them.
 for cmd in fiftybox-orchestration fiftybox-plans fiftybox-execute \
-           fiftybox-free-execute fiftybox-gpt-review fiftybox-cc-execute; do
+           fiftybox-local fiftybox-gpt-review; do
     if grep -qF -- "/$cmd" "$README"; then
         pass "README documents /$cmd"
     else
@@ -29,12 +29,12 @@ else
     fail "commands are not listed in a table"
 fi
 
-# Each command needs a description, not just its name. Require the cc-execute
-# row to mention CommandCode so the row carries real information.
-if grep -E '^\|.*fiftybox-cc-execute' "$README" | grep -qiE 'commandcode|cmd'; then
-    pass "cc-execute row describes what it does"
+# Each command needs a description, not just its name. Require the local row
+# to mention free/local providers so the row carries real information.
+if grep -E '^\|.*fiftybox-local' "$README" | grep -qiE 'free|local|modal|qwen'; then
+    pass "local row describes what it does"
 else
-    fail "cc-execute row has no description mentioning CommandCode"
+    fail "local row has no description mentioning free/local providers"
 fi
 
 # Existing content must survive.
