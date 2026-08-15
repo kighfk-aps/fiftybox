@@ -40,6 +40,27 @@ has "$SKILL" "테스트 실행은 Claude" "SKILL.md keeps test execution with Cl
 has "$SKILL" "Claude 폴백" "SKILL.md documents the Claude fallback"
 has "$SKILL" "pathspec" "SKILL.md scopes the task diff with a pathspec"
 
+# --- per-provider default model -------------------------------------------
+has "$SKILL" "grok-4.6" "SKILL.md gives grok its own default model"
+lacks "$SKILL" 'IMPL_MODEL=deepseek-v4-flash`(모델 미지정' \
+    "SKILL.md no longer falls grok through to the opencode-go default"
+
+# --- setup fails fast on an unknown provider ------------------------------
+has "$SKILL" "--phase setup" "SKILL.md runs the setup phase"
+grep -A3 -- "--phase setup" "$SKILL" | grep -qF -- "--implement-agent" \
+    && pass "SKILL.md passes --implement-agent to --phase setup" \
+    || fail "SKILL.md does not pass --implement-agent to --phase setup"
+
+# --- deploy-only mode is internally consistent -----------------------------
+has "$SKILL" 'artifactDir="$(pwd)/.omx/artifacts/deploy-only-' \
+    "deploy-only mode binds artifactDir before using it"
+lacks "$SKILL" "워크트리·아티팩트 셋업이 필요 없다" \
+    "deploy-only mode no longer contradicts its own summary.json step"
+
+# --- advisory review model is not hardcoded --------------------------------
+has "$SKILL" "<사용자가 지정한 모델>" \
+    "Step 6a advisory review takes the model from the user, not a literal"
+
 # --- prohibitions ----------------------------------------------------------
 lacks "$SKILL" "skills/orchestrate/scripts" "SKILL.md avoids the non-existent orchestrate path"
 lacks "$SKILL" "errorClass" "SKILL.md omits the unimplemented errorClass table"

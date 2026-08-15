@@ -71,7 +71,22 @@ provider가 `commandcode`면 CommandCode 요금제 가입과 `cmd` 설치·로�
 - `/fiftybox-execute "fix auth bug"`
   → `IMPL_PROVIDER=opencode-go`, `IMPL_MODEL=deepseek-v4-flash`
 - `/fiftybox-execute "add rate limiter" --provider grok`
-  → `IMPL_PROVIDER=grok`, `IMPL_MODEL=deepseek-v4-flash`(모델 미지정 시 기본값 유지 — provider가 이 기본 모델을 지원하지 않으면 사용자에게 `--model`을 물어본다)
+  → `IMPL_PROVIDER=grok`, `IMPL_MODEL=grok-4.6`
+
+**provider별 기본 모델.** `--model`이 생략됐을 때 `deepseek-v4-flash`로
+떨어지는 것은 provider도 생략됐을 때(즉 `opencode-go`)뿐이다. provider를
+명시했는데 `--model`이 없으면 아래 표를 먼저 본다:
+
+| provider | `--model` 생략 시 |
+|---|---|
+| `opencode-go` (또는 provider 생략) | `deepseek-v4-flash` |
+| `grok` | `grok-4.6` |
+| `commandcode` | Step 3의 tier 판정에 맡긴다 |
+| `pi` | 사용자에게 물어본다 |
+
+`grok`이 `deepseek-v4-flash`로 떨어지면 안 된다 — grok은 그 모델을 서빙하지
+않아 `Unknown model`로 죽는다. 표에 없는 조합이거나 사용자가 다른 모델을
+원하는 것 같으면 진행 전에 한 번 물어본다.
 
 ## Provider 참고
 
@@ -153,8 +168,13 @@ Step 6 리뷰에서 스코프 위반으로 오판하게 된다. 예: "단 Red �
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
-  --phase setup --task "<작업>" --cwd "$(pwd)"
+  --phase setup --task "<작업>" --cwd "$(pwd)" \
+  --implement-agent "<provider>"
 ```
+
+`--implement-agent`를 setup에도 넘긴다. 모르는·오타 난 provider 이름
+(특히 새로 들어온 `grok`)이 파이프라인 중간이 아니라 setup에서 바로
+걸러지게 하기 위해서다. 값은 Model Resolution에서 저장한 `<IMPL_PROVIDER>`다.
 
 JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다. 설계 문서를 아티팩트
 디렉터리에 복사한다. Step 0에서 preflight를 실행했다면(즉 provider가
@@ -260,7 +280,7 @@ Agent 프롬프트에 반드시 포함할 것:
 ### Step 6 — 리뷰 게이트 (선택적 advisory diff 리뷰 → Claude 최종)
 
 **advisory diff 리뷰는 opt-in이다.** 사용자가 호출 문장에 리뷰 provider/model을
-자연어로 언급했을 때만 수행한다(예: "sol로 리뷰까지 해줘", "gpt-5.6-terra로
+자연어로 언급했을 때만 수행한다(예: "sol로 리뷰까지 해줘", "gpt-5.6-luna로
 검토해줘"). 언급이 없으면 이 절 전체를 건너뛰고 곧장 Claude 최종 게이트(아래
 6b에 해당하는 ①③)로 간다. 언급했는데 모델이 불분명하면 한 번 물어본다.
 
@@ -308,9 +328,13 @@ nohup python3 ~/.claude/skills/fiftybox-execute/scripts/diff_review.py \
   --test "<테스트 파일>" \
   --context "<artifactDir>/design.md" \
   --task-name "task-N" --out "<artifactDir>/reviews" \
-  --model gpt-5.6-terra --effort high \
+  --model "<사용자가 지정한 모델>" --effort high \
   > "<artifactDir>/gpt-review-task-N.out" 2>&1 &
 ```
+
+`--model`에는 **사용자가 자연어로 지정한 모델 슬러그를 그대로** 넣는다.
+이 절에 고정 기본 모델은 없다 — 지정이 없으면 이 절 자체를 건너뛴다.
+`--effort`도 사용자가 언급했으면 그 값을 쓰고, 없으면 `high`가 기본이다.
 
 `.out` 로그를 폴링해 완료를 기다린다(Step 5 detached 패턴과 동일). 마지막 줄이
 stdout JSON이다: `{ok, taskName, diffPath, reviewPath, model, effort, verdict, findingsCount}`.
@@ -527,21 +551,33 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 사용자가 `/fiftybox-execute deploy`라고 말하거나 "그냥 배포만 해줘"라고 요청하면:
 
-1. Step 1~8을 전부 건너뛴다
+1. Step 1~8을 전부 건너뛴다 — 설계·태스크 분해·Red 테스트·구현·리뷰·커밋이
+   전부 없다
 2. 현재 브랜치가 main과 동기화돼 있는지 확인한다
-3. 프로젝트 루트에서 Phase 7b(deploy)를 바로 실행한다
-4. deploy-only에는 워크트리·아티팩트 셋업이 필요 없다
+3. **`--phase setup`은 돌리지 않는다.** 격리 워크트리도, 전체 아티팩트
+   파이프라인도 만들지 않는다. 프로젝트 루트에서 Phase 7b(deploy)만 실행한다
+4. 다만 deploy 페이즈는 선행 페이즈가 성공했는지를 `summary.json`으로
+   확인하므로, **최소한의 아티팩트 디렉터리 하나는 손으로 만든다**:
 
-Model Resolution에서 저장한 `<IMPL_PROVIDER>`/`<IMPL_MODEL>`을 그대로 쓴다(둘 다
-생략됐다면 기본값 `opencode-go`/`deepseek-v4-flash`):
+```bash
+artifactDir="$(pwd)/.omx/artifacts/deploy-only-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$artifactDir"
+printf '{"complete": {"status": "success"}}\n' > "$artifactDir/summary.json"
+```
+
+이 디렉터리에는 `summary.json` 하나만 있으면 된다 — `design.md`도
+`task-batches.md`도 필요 없다(deploy 페이즈는 읽지 않는다).
+
+5. 위에서 만든 `$artifactDir`를 그대로 넘겨 배포한다. provider/model은 Model
+   Resolution에서 저장한 `<IMPL_PROVIDER>`/`<IMPL_MODEL>`을 쓴다(둘 다
+   생략됐다면 기본값 `opencode-go`/`deepseek-v4-flash`):
 
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" \
+  --artifact-dir "$artifactDir" \
   --implement-agent "<provider>" --model "<model>"
 ```
 
-deploy-only에서는 최소한의 아티팩트 디렉터리와 `complete.status: "success"`를
-담은 `summary.json`을 만들어 deploy 페이즈 게이트를 통과시킨다.
+6. cleanup(Phase 8)은 돌리지 않는다 — 지울 워크트리가 없다.
 
