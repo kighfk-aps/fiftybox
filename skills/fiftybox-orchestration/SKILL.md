@@ -230,7 +230,7 @@ Codex/GPT is the other opt-in reviewer. It needs no provider — pass the agent 
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase verify-design --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --design-review-agent codex --design-review-model gpt-5.6-terra
+  --design-review-agent codex --design-review-model gpt-5.6-sol
 ```
 
 Codex must be enabled on this machine (`codex --version` must succeed). Either reviewer is **advisory**: the verdict is recorded in `design-review.md` and surfaced, but does not stop the pipeline unless you pass `--strict-review`.
