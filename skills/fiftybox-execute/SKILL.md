@@ -522,4 +522,26 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   — Claude가 직접 고치지 않는다. 자동 재구현은 태스크당 1회
 - **⛔ Claude는 계획서 내용, 속도, 모델 가용성과 무관하게 구현 코드를 직접 쓰지
   않는다. 이 규칙 위반은 치명적 실패다**
-</content>
+
+## Deploy-Only Mode
+
+사용자가 `/fiftybox-execute deploy`라고 말하거나 "그냥 배포만 해줘"라고 요청하면:
+
+1. Step 1~8을 전부 건너뛴다
+2. 현재 브랜치가 main과 동기화돼 있는지 확인한다
+3. 프로젝트 루트에서 Phase 7b(deploy)를 바로 실행한다
+4. deploy-only에는 워크트리·아티팩트 셋업이 필요 없다
+
+Model Resolution에서 저장한 `<IMPL_PROVIDER>`/`<IMPL_MODEL>`을 그대로 쓴다(둘 다
+생략됐다면 기본값 `opencode-go`/`deepseek-v4-flash`):
+
+```bash
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
+  --phase deploy --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --implement-agent "<provider>" --model "<model>"
+```
+
+deploy-only에서는 최소한의 아티팩트 디렉터리와 `complete.status: "success"`를
+담은 `summary.json`을 만들어 deploy 페이즈 게이트를 통과시킨다.
+
