@@ -562,9 +562,13 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```bash
 artifactDir="$(pwd)/.omx/artifacts/deploy-only-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$artifactDir"
-printf '{"complete": {"status": "success"}}\n' > "$artifactDir/summary.json"
+printf '{"worktree": "%s", "phases": {"complete": {"status": "success"}}}\n' \
+  "$(pwd)" > "$artifactDir/summary.json"
 ```
 
+`phase_deploy`는 `summary["worktree"]`를 곧바로 읽으므로 `worktree` 키가
+없으면 `KeyError`로 죽는다. `complete` 상태도 최상위가 아니라 `phases`
+아래에 있어야 통과 게이트(`phases.complete.status == "success"`)를 만족한다.
 이 디렉터리에는 `summary.json` 하나만 있으면 된다 — `design.md`도
 `task-batches.md`도 필요 없다(deploy 페이즈는 읽지 않는다).
 
