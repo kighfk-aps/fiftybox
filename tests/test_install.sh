@@ -24,8 +24,41 @@ CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
+# Pre-seed the three consolidated-away targets so we can assert install.sh
+# removes them (fiftybox-cc-execute / fiftybox-free-execute, 2026-08-15).
+OBSOLETE_CC_SKILL="$INSTALL_ROOT/.claude/skills/fiftybox-cc-execute"
+OBSOLETE_FREE_SKILL="$INSTALL_ROOT/.claude/skills/fiftybox-free-execute"
+OBSOLETE_CC_CMD="$COMMANDS_DIR/fiftybox-cc-execute.md"
+OBSOLETE_FREE_CMD="$COMMANDS_DIR/fiftybox-free-execute.md"
+mkdir -p "$OBSOLETE_CC_SKILL/scripts" "$OBSOLETE_FREE_SKILL/scripts" "$COMMANDS_DIR"
+echo "stale" > "$OBSOLETE_CC_SKILL/SKILL.md"
+echo "stale" > "$OBSOLETE_CC_SKILL/scripts/cc_diff_review.py"
+echo "stale" > "$OBSOLETE_FREE_SKILL/SKILL.md"
+echo "stale" > "$OBSOLETE_FREE_CMD"
+echo "stale" > "$OBSOLETE_CC_CMD"
+
 # Run install.sh
 bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
+
+# ---------------------------------------------------------------------------
+# install.sh: uninstalls the consolidated-away skills
+# ---------------------------------------------------------------------------
+
+[[ ! -e "$OBSOLETE_CC_SKILL" ]] \
+    && pass "install.sh removed the obsolete fiftybox-cc-execute skill dir" \
+    || fail "obsolete fiftybox-cc-execute skill dir survived install.sh"
+
+[[ ! -e "$OBSOLETE_FREE_SKILL" ]] \
+    && pass "install.sh removed the obsolete fiftybox-free-execute skill dir" \
+    || fail "obsolete fiftybox-free-execute skill dir survived install.sh"
+
+[[ ! -e "$OBSOLETE_CC_CMD" ]] \
+    && pass "install.sh removed the obsolete fiftybox-cc-execute.md command" \
+    || fail "obsolete fiftybox-cc-execute.md command survived install.sh"
+
+[[ ! -e "$OBSOLETE_FREE_CMD" ]] \
+    && pass "install.sh removed the obsolete fiftybox-free-execute.md command" \
+    || fail "obsolete fiftybox-free-execute.md command survived install.sh"
 
 # ---------------------------------------------------------------------------
 # install.sh: expected files

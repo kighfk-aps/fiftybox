@@ -18,6 +18,36 @@ warn() { printf '[fiftybox] WARNING: %s\n' "$*" >&2; }
 log "Installing fiftybox orchestrate harness..."
 echo ""
 
+# ---------------------------------------------------------------------------
+# Remove skills that were consolidated away (2026-08-15).
+# fiftybox-cc-execute and fiftybox-free-execute were absorbed into
+# fiftybox-execute and fiftybox-local. install.sh only ever copies files in, so
+# without this an upgraded machine keeps shadow copies of the deleted skills and
+# Claude can still route to them.
+# ---------------------------------------------------------------------------
+removed_any=0
+for obsolete_dir in \
+  "$HOME/.claude/skills/fiftybox-cc-execute" \
+  "$HOME/.claude/skills/fiftybox-free-execute"; do
+  if [[ -e "$obsolete_dir" ]]; then
+    rm -rf "$obsolete_dir"
+    log "Removed obsolete skill → $obsolete_dir"
+    removed_any=1
+  fi
+done
+for obsolete_cmd in \
+  "$HOME/.claude/commands/fiftybox-cc-execute.md" \
+  "$HOME/.claude/commands/fiftybox-free-execute.md"; do
+  if [[ -e "$obsolete_cmd" ]]; then
+    rm -f "$obsolete_cmd"
+    log "Removed obsolete command → $obsolete_cmd"
+    removed_any=1
+  fi
+done
+if [[ "$removed_any" -eq 1 ]]; then
+  echo ""
+fi
+
 # Check prerequisites — warn but don't abort so partial installs still work
 for bin in pi claude cmd; do
   if command -v "$bin" &>/dev/null; then
