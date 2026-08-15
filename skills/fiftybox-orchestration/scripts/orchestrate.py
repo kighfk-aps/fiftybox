@@ -1849,7 +1849,7 @@ def run_design_review_agent(
 
     Two opt-in reviewers exist: GLM through the explore agent template
     (`--design-review-provider zai-coding --design-review-model glm-5.2`) and
-    Codex/GPT (`--design-review-agent codex --design-review-model gpt-5.6-terra`).
+    Codex/GPT (`--design-review-agent codex --design-review-model gpt-5.6-sol`).
     `agent_override` selects the latter without changing explore_agent, which
     other phases still use. Read-only by contract: the task instructs the agent
     not to touch files, and the codex template also enforces it with a sandbox.
@@ -1922,7 +1922,7 @@ def phase_verify_design(root: Path, artifact_dir: Path, args: argparse.Namespace
         note = (
             "SKIPPED: design review not requested. Pass "
             "--design-review-provider/--design-review-model (e.g. zai-coding / glm-5.2) "
-            "or --design-review-agent codex --design-review-model gpt-5.6-terra "
+            "or --design-review-agent codex --design-review-model gpt-5.6-sol "
             "to review a very complex architecture."
         )
         review_path.write_text(f"# Design Review\n\n{note}\n", encoding="utf-8")
