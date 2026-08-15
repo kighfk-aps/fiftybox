@@ -18,11 +18,9 @@ SKILLS_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-orchestration"
 PLANS_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local"
 LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
-FREE_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-free-execute"
-CC_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-cc-execute"
+SKILLS_DIR_EXECUTE="$INSTALL_ROOT/.claude/skills/fiftybox-execute"
 GPT_REVIEW_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-gpt-review"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
-CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
@@ -77,29 +75,13 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "fiftybox-execute.md command installed" \
     || fail "fiftybox-execute.md command not installed"
 
-[[ -f "$COMMANDS_DIR/fiftybox-free-execute.md" ]] \
-    && pass "fiftybox-free-execute.md command installed" \
-    || fail "fiftybox-free-execute.md command not installed"
+[[ -f "$SKILLS_DIR_EXECUTE/scripts/diff_review.py" ]] \
+    && pass "fiftybox-execute diff_review.py installed" \
+    || fail "fiftybox-execute diff_review.py missing"
 
-[[ -f "$FREE_EXECUTE_SKILL_DIR/SKILL.md" ]] \
-    && pass "fiftybox-free-execute SKILL.md installed" \
-    || fail "fiftybox-free-execute SKILL.md not installed"
-
-[[ -f "$FREE_EXECUTE_SKILL_DIR/scripts/discover_free_models.py" ]] \
-    && pass "discover_free_models.py installed" \
-    || fail "discover_free_models.py not installed"
-
-[[ -f "$CC_EXECUTE_SKILL_DIR/SKILL.md" ]] \
-    && pass "fiftybox-cc-execute SKILL.md installed" \
-    || fail "fiftybox-cc-execute SKILL.md not installed"
-
-[[ -f "$CC_EXECUTE_SKILL_DIR/scripts/cc_preflight.py" ]] \
-    && pass "cc_preflight.py installed" \
-    || fail "cc_preflight.py not installed"
-
-[[ -f "$COMMANDS_DIR/fiftybox-cc-execute.md" ]] \
-    && pass "fiftybox-cc-execute slash command installed" \
-    || fail "fiftybox-cc-execute slash command not installed"
+[[ -f "$SKILLS_DIR_EXECUTE/scripts/cc_preflight.py" ]] \
+    && pass "fiftybox-execute cc_preflight.py installed" \
+    || fail "fiftybox-execute cc_preflight.py missing"
 
 [[ -f "$GPT_REVIEW_SKILL_DIR/SKILL.md" ]] \
     && pass "fiftybox-gpt-review SKILL.md installed" \
@@ -121,42 +103,17 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "Claude fiftybox-plans skill installed" \
     || fail "Claude fiftybox-plans skill not installed"
 
-# The local-model skills are gitignored, so they are only present in a working
-# tree that still has them. Assert they install when the source has them, and
-# that they are absent when it does not — never that they must exist.
-if [[ -f "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" ]]; then
-    [[ -f "$LOCAL_SKILL_DIR/SKILL.md" ]] \
-        && pass "Claude fiftybox-local skill installed" \
-        || fail "Claude fiftybox-local skill not installed"
+[[ -f "$LOCAL_SKILL_DIR/SKILL.md" ]] \
+    && pass "fiftybox-local skill installed" \
+    || fail "fiftybox-local skill not installed"
 
-    [[ -x "$LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
-        && pass "fiftybox-local select_remote_model.sh installed executable" \
-        || fail "fiftybox-local select_remote_model.sh missing or not executable"
+[[ -f "$LOCAL_SKILL_DIR/scripts/discover_free_models.py" ]] \
+    && pass "fiftybox-local discover_free_models.py installed" \
+    || fail "fiftybox-local discover_free_models.py missing"
 
-    [[ -x "$LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
-        && pass "fiftybox-local stop_remote_model.sh installed executable" \
-        || fail "fiftybox-local stop_remote_model.sh missing or not executable"
-
-    [[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
-        && pass "Codex fiftybox-local skill installed" \
-        || fail "Codex fiftybox-local skill not installed"
-
-    [[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/select_remote_model.sh" ]] \
-        && pass "Codex fiftybox-local select_remote_model.sh installed executable" \
-        || fail "Codex fiftybox-local select_remote_model.sh missing or not executable"
-
-    [[ -x "$CODEX_LOCAL_SKILL_DIR/scripts/stop_remote_model.sh" ]] \
-        && pass "Codex fiftybox-local stop_remote_model.sh installed executable" \
-        || fail "Codex fiftybox-local stop_remote_model.sh missing or not executable"
-
-    [[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
-        && pass "Codex fiftybox-local OpenAI metadata installed" \
-        || fail "Codex fiftybox-local OpenAI metadata not installed"
-else
-    [[ ! -e "$LOCAL_SKILL_DIR" ]] \
-        && pass "fiftybox-local absent from source and not installed" \
-        || fail "fiftybox-local installed although the source lacks it"
-fi
+[[ -f "$COMMANDS_DIR/fiftybox-local.md" ]] \
+    && pass "fiftybox-local slash command installed" \
+    || fail "fiftybox-local slash command not installed"
 
 if [[ -f "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" ]]; then
     [[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
@@ -259,47 +216,42 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# install.sh survives a checkout without the gitignored local-model skills
+# install.sh survives a checkout without the still-gitignored
+# fiftybox-local-execute skill.
 #
-# skills/fiftybox-local*/ and commands/fiftybox-local*.md are gitignored, so a
-# clean clone or an orchestrate worktree does not have them. install.sh used to
-# cp them unconditionally and die under `set -e`, which meant install.sh could
-# never run anywhere except a working tree that happened to still have them.
+# commands/fiftybox-local-execute.md and skills/fiftybox-local-execute/ are
+# gitignored, so a clean clone or an orchestrate worktree does not have them.
+# fiftybox-local itself is now always tracked (Task 3), so it is no longer
+# removed here.
 # ---------------------------------------------------------------------------
 
 BARE_SRC="$(mktemp -d)"
 cp -R "$SCRIPT_DIR/." "$BARE_SRC/"
-rm -rf "$BARE_SRC/skills/fiftybox-local" \
-       "$BARE_SRC/skills/fiftybox-local-execute" \
-       "$BARE_SRC/commands/fiftybox-local.md" \
+rm -rf "$BARE_SRC/skills/fiftybox-local-execute" \
        "$BARE_SRC/commands/fiftybox-local-execute.md"
 
 BARE_HOME="$(mktemp -d)"
 if HOME="$BARE_HOME" bash "$BARE_SRC/install.sh" >/dev/null 2>&1; then
-    pass "install.sh succeeds without the gitignored local-model skills"
+    pass "install.sh succeeds without the gitignored fiftybox-local-execute skill"
 else
-    fail "install.sh failed on a checkout lacking skills/fiftybox-local*"
+    fail "install.sh failed on a checkout lacking skills/fiftybox-local-execute"
 fi
 
 [[ -f "$BARE_HOME/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py" ]] \
-    && pass "orchestrate.py still installed without local-model skills" \
-    || fail "orchestrate.py missing when local-model skills absent"
+    && pass "orchestrate.py still installed without fiftybox-local-execute" \
+    || fail "orchestrate.py missing when fiftybox-local-execute absent"
 
-[[ -f "$BARE_HOME/.claude/skills/fiftybox-free-execute/SKILL.md" ]] \
-    && pass "fiftybox-free-execute still installed without local-model skills" \
-    || fail "fiftybox-free-execute missing when local-model skills absent"
-
-[[ -f "$BARE_HOME/.claude/skills/fiftybox-cc-execute/SKILL.md" ]] \
-    && pass "fiftybox-cc-execute still installed without local-model skills" \
-    || fail "fiftybox-cc-execute missing when local-model skills absent"
+[[ -f "$BARE_HOME/.claude/skills/fiftybox-local/SKILL.md" ]] \
+    && pass "fiftybox-local still installed without fiftybox-local-execute" \
+    || fail "fiftybox-local missing when fiftybox-local-execute absent"
 
 [[ -f "$BARE_HOME/.claude/commands/fiftybox-execute.md" ]] \
-    && pass "slash commands still installed without local-model skills" \
-    || fail "slash commands missing when local-model skills absent"
+    && pass "slash commands still installed without fiftybox-local-execute" \
+    || fail "slash commands missing when fiftybox-local-execute absent"
 
-[[ ! -e "$BARE_HOME/.claude/skills/fiftybox-local" ]] \
-    && pass "absent local-model skill is not installed" \
-    || fail "fiftybox-local installed from a source that lacks it"
+[[ ! -e "$BARE_HOME/.claude/skills/fiftybox-local-execute" ]] \
+    && pass "absent fiftybox-local-execute skill is not installed" \
+    || fail "fiftybox-local-execute installed from a source that lacks it"
 
 # ---------------------------------------------------------------------------
 # Summary
