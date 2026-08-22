@@ -5,8 +5,6 @@ SKILLS_DIR="$HOME/.claude/skills/fiftybox-orchestration"
 PLANS_SKILL_DIR="$HOME/.claude/skills/fiftybox-plans"
 LOCAL_SKILL_DIR="$HOME/.claude/skills/fiftybox-local"
 EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-execute"
-FREE_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-free-execute"
-CC_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-cc-execute"
 GPT_REVIEW_SKILL_DIR="$HOME/.claude/skills/fiftybox-gpt-review"
 LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
@@ -55,21 +53,10 @@ chmod +x "$SKILLS_DIR/configure.sh"
 log "Installed configure.sh → $SKILLS_DIR/configure.sh"
 
 # Install fiftybox-execute skill
-mkdir -p "$EXECUTE_SKILL_DIR"
+mkdir -p "$EXECUTE_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-execute/SKILL.md" "$EXECUTE_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-execute/scripts/"*.py "$EXECUTE_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-execute → $EXECUTE_SKILL_DIR"
-
-# Install fiftybox-free-execute skill (opencode free-tier models)
-mkdir -p "$FREE_EXECUTE_SKILL_DIR/scripts"
-cp "$SCRIPT_DIR/skills/fiftybox-free-execute/SKILL.md" "$FREE_EXECUTE_SKILL_DIR/SKILL.md"
-cp "$SCRIPT_DIR/skills/fiftybox-free-execute/scripts/"*.py "$FREE_EXECUTE_SKILL_DIR/scripts/"
-log "Installed Claude skill fiftybox-free-execute → $FREE_EXECUTE_SKILL_DIR"
-
-# Install fiftybox-cc-execute skill (CommandCode paid plans)
-mkdir -p "$CC_EXECUTE_SKILL_DIR/scripts"
-cp "$SCRIPT_DIR/skills/fiftybox-cc-execute/SKILL.md" "$CC_EXECUTE_SKILL_DIR/SKILL.md"
-cp "$SCRIPT_DIR/skills/fiftybox-cc-execute/scripts/"*.py "$CC_EXECUTE_SKILL_DIR/scripts/"
-log "Installed Claude skill fiftybox-cc-execute → $CC_EXECUTE_SKILL_DIR"
 
 # Install fiftybox-gpt-review skill (Codex/GPT design & plan review)
 mkdir -p "$GPT_REVIEW_SKILL_DIR/scripts"
@@ -109,37 +96,11 @@ mkdir -p "$CODEX_SKILLS_DIR/fiftybox-plans"
 cp "$SCRIPT_DIR/skills/fiftybox-plans/SKILL.md" "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md"
 log "Installed Codex skill fiftybox-plans → $CODEX_SKILLS_DIR/fiftybox-plans"
 
-# Install local-model orchestration variant (gitignored; skip when absent)
-if [[ -f "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" ]]; then
-  mkdir -p "$LOCAL_SKILL_DIR"
-  cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
-  if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/scripts" ]]; then
-    mkdir -p "$LOCAL_SKILL_DIR/scripts"
-    cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/"*.sh "$LOCAL_SKILL_DIR/scripts/"
-    chmod +x "$LOCAL_SKILL_DIR/scripts/"*.sh
-  fi
-  if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/agents" ]]; then
-    mkdir -p "$LOCAL_SKILL_DIR/agents"
-    cp "$SCRIPT_DIR/skills/fiftybox-local/agents/"* "$LOCAL_SKILL_DIR/agents/"
-  fi
-  log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
-
-  # Install local-model orchestration variant for Codex
-  mkdir -p "$CODEX_LOCAL_SKILL_DIR"
-  cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$CODEX_LOCAL_SKILL_DIR/SKILL.md"
-  if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/scripts" ]]; then
-    mkdir -p "$CODEX_LOCAL_SKILL_DIR/scripts"
-    cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/"*.sh "$CODEX_LOCAL_SKILL_DIR/scripts/"
-    chmod +x "$CODEX_LOCAL_SKILL_DIR/scripts/"*.sh
-  fi
-  if [[ -d "$SCRIPT_DIR/skills/fiftybox-local/agents" ]]; then
-    mkdir -p "$CODEX_LOCAL_SKILL_DIR/agents"
-    cp "$SCRIPT_DIR/skills/fiftybox-local/agents/"* "$CODEX_LOCAL_SKILL_DIR/agents/"
-  fi
-  log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
-else
-  log "Skipped fiftybox-local (not present in this checkout)"
-fi
+# Install fiftybox-local (tracked; local/free execute)
+mkdir -p "$LOCAL_SKILL_DIR/scripts"
+cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$LOCAL_SKILL_DIR/scripts/"
+log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
 
 # Install slash command
 mkdir -p "$COMMANDS_DIR"
@@ -149,21 +110,17 @@ cp "$SCRIPT_DIR/commands/fiftybox-plans.md" "$COMMANDS_DIR/fiftybox-plans.md"
 log "Installed commands/fiftybox-plans.md → $COMMANDS_DIR/fiftybox-plans.md"
 cp "$SCRIPT_DIR/commands/fiftybox-execute.md" "$COMMANDS_DIR/fiftybox-execute.md"
 log "Installed commands/fiftybox-execute.md → $COMMANDS_DIR/fiftybox-execute.md"
-cp "$SCRIPT_DIR/commands/fiftybox-free-execute.md" "$COMMANDS_DIR/fiftybox-free-execute.md"
-log "Installed commands/fiftybox-free-execute.md → $COMMANDS_DIR/fiftybox-free-execute.md"
+cp "$SCRIPT_DIR/commands/fiftybox-local.md" "$COMMANDS_DIR/fiftybox-local.md"
+log "Installed commands/fiftybox-local.md → $COMMANDS_DIR/fiftybox-local.md"
 cp "$SCRIPT_DIR/commands/fiftybox-gpt-review.md" "$COMMANDS_DIR/fiftybox-gpt-review.md"
 log "Installed commands/fiftybox-gpt-review.md → $COMMANDS_DIR/fiftybox-gpt-review.md"
-cp "$SCRIPT_DIR/commands/fiftybox-cc-execute.md" "$COMMANDS_DIR/fiftybox-cc-execute.md"
-log "Installed commands/fiftybox-cc-execute.md → $COMMANDS_DIR/fiftybox-cc-execute.md"
-for local_cmd in fiftybox-local fiftybox-local-execute; do
-  # commands/fiftybox-local*.md is gitignored alongside its skill.
-  if [[ -f "$SCRIPT_DIR/commands/$local_cmd.md" ]]; then
-    cp "$SCRIPT_DIR/commands/$local_cmd.md" "$COMMANDS_DIR/$local_cmd.md"
-    log "Installed commands/$local_cmd.md → $COMMANDS_DIR/$local_cmd.md"
-  else
-    log "Skipped commands/$local_cmd.md (not present in this checkout)"
-  fi
-done
+# commands/fiftybox-local-execute.md is gitignored alongside its skill.
+if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-execute.md" ]]; then
+  cp "$SCRIPT_DIR/commands/fiftybox-local-execute.md" "$COMMANDS_DIR/fiftybox-local-execute.md"
+  log "Installed commands/fiftybox-local-execute.md → $COMMANDS_DIR/fiftybox-local-execute.md"
+else
+  log "Skipped commands/fiftybox-local-execute.md (not present in this checkout)"
+fi
 
 echo ""
 log "To configure agents: $SKILLS_DIR/configure.sh"
