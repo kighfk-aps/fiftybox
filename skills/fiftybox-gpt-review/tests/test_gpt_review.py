@@ -236,7 +236,7 @@ def cache(tmp_path, monkeypatch) -> Path:
     ch = tmp_path / "codex-home"
     ch.mkdir()
     (ch / "models_cache.json").write_text(json.dumps({"models": [
-        {"slug": "gpt-5.6-terra"}, {"slug": "gpt-5.4-mini"},
+        {"slug": "gpt-5.6-sol"}, {"slug": "gpt-5.6-terra"}, {"slug": "gpt-5.4-mini"},
     ]}), encoding="utf-8")
     monkeypatch.setenv("CODEX_HOME", str(ch))
     return ch / "models_cache.json"

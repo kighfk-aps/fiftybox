@@ -30,7 +30,7 @@ description: 설계·계획 마크다운 문서를 Codex의 GPT 모델에 리뷰
 python3 <gpt_review.py> --doc "<문서경로>" [--model <slug>] [--effort <level>] [--context <path>]
 ```
 
-기본값은 `gpt-5.6-terra` / `high`다. 사용자가 모델을 지정하지 않으면 그대로 쓴다.
+기본값은 `gpt-5.6-sol` / `high`다. 사용자가 모델을 지정하지 않으면 그대로 쓴다.
 
 문서가 다른 산출물(intent, explore report 등)에 의존하면 `--context`로 넘긴다. 리뷰어는
 read-only 샌드박스에서 돌고 저장소를 탐색하지 않으므로, 넘기지 않은 파일은 리뷰에 반영되지 않는다.
@@ -99,5 +99,5 @@ Applied: N items / Rejected: M items"
 그쪽 phase의 opt-in 플래그를 쓴다:
 
 ```bash
---design-review-agent codex --design-review-model gpt-5.6-terra
+--design-review-agent codex --design-review-model gpt-5.6-sol
 ```
