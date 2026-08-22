@@ -68,15 +68,14 @@ cd fiftybox && ./install.sh
 
 ### Commands
 
-fiftybox ships six slash commands:
+fiftybox ships five slash commands:
 
 | Command | What it does |
 |---------|--------------|
 | `/fiftybox-orchestration` | Full pipeline: explore → clarify → design → implement → review → commit → push |
 | `/fiftybox-plans` | Planning front half only — produces a saved Markdown plan for later handoff |
-| `/fiftybox-execute` | Parallel-batch TDD execution with Pi CLI as the implementer |
-| `/fiftybox-free-execute` | Sequential TDD execution on opencode free-tier models |
-| `/fiftybox-cc-execute` | Parallel-batch TDD execution with the CommandCode (`cmd`) CLI as the implementer |
+| `/fiftybox-execute` | Parallel-batch TDD execution; `--provider` selects opencode-go / commandcode / pi / grok |
+| `/fiftybox-local` | Dynamic-parallel TDD on local/free providers (opencode free-tier, Modal Qwen3.8-27B) |
 | `/fiftybox-gpt-review` | Reviews a design or plan document with Codex GPT models |
 
 ### Flags
@@ -116,7 +115,7 @@ To switch agents, run:
 
 Or edit `~/.claude/skills/fiftybox-orchestration/config.json` directly.
 
-Supported built-in agents: `pi`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`
+Supported built-in agents: `pi`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`, `codex`, `commandcode`, `grok`
 
 ### Adding a custom agent
 

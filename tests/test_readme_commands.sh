@@ -14,7 +14,7 @@ fail() { echo "FAIL: $1"; FAIL=$(( FAIL + 1 )); }
 # The gitignored fiftybox-local* commands are excluded on purpose — a clean
 # checkout does not ship them.
 for cmd in fiftybox-orchestration fiftybox-plans fiftybox-execute \
-           fiftybox-free-execute fiftybox-gpt-review fiftybox-cc-execute; do
+           fiftybox-local fiftybox-gpt-review; do
     if grep -qF -- "/$cmd" "$README"; then
         pass "README documents /$cmd"
     else
@@ -29,12 +29,18 @@ else
     fail "commands are not listed in a table"
 fi
 
-# Each command needs a description, not just its name. Require the cc-execute
-# row to mention CommandCode so the row carries real information.
-if grep -E '^\|.*fiftybox-cc-execute' "$README" | grep -qiE 'commandcode|cmd'; then
-    pass "cc-execute row describes what it does"
+# Each command needs a description, not just its name. Require the execute
+# row to mention provider selection so the row carries real information.
+if grep -E '^\|.*fiftybox-execute' "$README" | grep -qiE 'provider|commandcode|grok'; then
+    pass "execute row describes provider parameterization"
 else
-    fail "cc-execute row has no description mentioning CommandCode"
+    fail "execute row has no description mentioning providers"
+fi
+
+if grep -E '^\|.*fiftybox-local' "$README" | grep -qiE 'local|free|qwen'; then
+    pass "local row describes local/free execution"
+else
+    fail "local row has no description mentioning local/free providers"
 fi
 
 # Existing content must survive.

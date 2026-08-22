@@ -26,10 +26,16 @@ If neither exists, report that fiftybox-orchestration is not installed and stop.
 
 ## Resolve The Local-Model Helper Scripts
 
-Phase 2 needs `select_remote_model.sh` / `stop_remote_model.sh` from the `fiftybox-local` skill. Resolve the directory in this order, same as `/fiftybox-local` does:
+Phase 2 needs `select_remote_model.sh` / `stop_remote_model.sh` from the
+private `fiftybox-local-execute` skill (the tracked `/fiftybox-local` is the
+local/free execute pipeline and does not ship these helpers). Resolve the
+directory in this order:
 
 ```bash
 for dir in \
+  "${CODEX_HOME:-$HOME/.codex}/skills/fiftybox-local-execute/scripts" \
+  "$HOME/.claude/skills/fiftybox-local-execute/scripts" \
+  "$(pwd)/skills/fiftybox-local-execute/scripts" \
   "${CODEX_HOME:-$HOME/.codex}/skills/fiftybox-local/scripts" \
   "$HOME/.claude/skills/fiftybox-local/scripts" \
   "$(pwd)/skills/fiftybox-local/scripts"; do
@@ -39,7 +45,7 @@ for dir in \
   fi
 done
 test -n "${FIFTYBOX_LOCAL_HELPER_DIR:-}" || {
-  echo "fiftybox-local helper scripts not found" >&2
+  echo "select_remote_model.sh not found (fiftybox-local-execute)" >&2
   exit 1
 }
 ```
@@ -195,7 +201,7 @@ Codex/GPT is the other opt-in reviewer. It needs no provider — pass the agent 
 ```bash
 python3 <orchestrate.py> --phase verify-design --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --design-review-agent codex --design-review-model gpt-5.6-terra
+  --design-review-agent codex --design-review-model gpt-5.6-sol
 ```
 
 Codex must be enabled on this machine (`codex --version` must succeed). Either reviewer is **advisory**: the verdict is recorded in `design-review.md` and surfaced, but does not stop the pipeline unless you pass `--strict-review`.
