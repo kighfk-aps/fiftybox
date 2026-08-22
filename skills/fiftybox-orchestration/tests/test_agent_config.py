@@ -20,9 +20,9 @@ import orchestrate as orc  # noqa: E402
 # ---------------------------------------------------------------------------
 
 class TestBuiltinAgents:
-    def test_all_eight_agents_present(self):
+    def test_all_builtin_agents_present(self):
         expected = {"pi", "opencode", "aider", "gemini", "qwen", "cursor", "codex",
-                    "commandcode"}
+                    "commandcode", "grok"}
         assert set(orc.BUILTIN_AGENTS.keys()) == expected
 
     def test_codex_cmd_is_read_only_and_isolated(self):

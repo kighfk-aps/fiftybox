@@ -94,6 +94,9 @@ BUILTIN_AGENTS: dict[str, dict] = {
     "commandcode": {"cmd": ["cmd", "-p", "{prompt}\n{task}", "-m", "{model}",
                             "--yolo", "--trust", "--no-session",
                             "--skip-onboarding", "--no-auto-update"]},
+    "grok": {"cmd": ["grok", "-p", "{prompt}\n{task}", "--model", "{model}",
+                     "--permission-mode", "bypassPermissions",
+                     "--output-format", "json"]},
 }
 
 
