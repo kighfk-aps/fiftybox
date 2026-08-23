@@ -4,7 +4,6 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$SCRIPT_DIR/skills/fiftybox-execute/SKILL.md"
-COMMAND="$SCRIPT_DIR/commands/fiftybox-execute.md"
 PASS=0
 FAIL=0
 
@@ -44,10 +43,6 @@ has "$SKILL" "pathspec" "SKILL.md scopes the task diff with a pathspec"
 lacks "$SKILL" "skills/orchestrate/scripts" "SKILL.md avoids the non-existent orchestrate path"
 lacks "$SKILL" "errorClass" "SKILL.md omits the unimplemented errorClass table"
 lacks "$SKILL" "--commit-message" "SKILL.md does not document the nonexistent --commit-message flag"
-
-# --- slash command ----------------------------------------------------------
-has "$COMMAND" "skills/fiftybox-execute/SKILL.md" "slash command points at the skill body"
-has "$COMMAND" '$ARGUMENTS' "slash command forwards \$ARGUMENTS"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

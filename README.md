@@ -68,7 +68,9 @@ cd fiftybox && ./install.sh
 
 ### Commands
 
-fiftybox ships five slash commands:
+fiftybox ships five slash commands. Each one is the installed skill
+(`/skill-name`); there are no separate `~/.claude/commands/` wrappers, because
+those duplicated every fiftybox entry in Claude Code's skill list.
 
 | Command | What it does |
 |---------|--------------|

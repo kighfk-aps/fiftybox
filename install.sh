@@ -102,25 +102,20 @@ cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
 cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$LOCAL_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
 
-# Install slash command
+# Claude Code already exposes each installed skill as /skill-name. Matching
+# ~/.claude/commands/*.md wrappers made every fiftybox skill appear twice in
+# the skill / slash-command list. Do not install wrappers; remove leftovers.
 mkdir -p "$COMMANDS_DIR"
-cp "$SCRIPT_DIR/commands/fiftybox-orchestration.md" "$COMMANDS_DIR/fiftybox-orchestration.md"
-log "Installed commands/fiftybox-orchestration.md → $COMMANDS_DIR/fiftybox-orchestration.md"
-cp "$SCRIPT_DIR/commands/fiftybox-plans.md" "$COMMANDS_DIR/fiftybox-plans.md"
-log "Installed commands/fiftybox-plans.md → $COMMANDS_DIR/fiftybox-plans.md"
-cp "$SCRIPT_DIR/commands/fiftybox-execute.md" "$COMMANDS_DIR/fiftybox-execute.md"
-log "Installed commands/fiftybox-execute.md → $COMMANDS_DIR/fiftybox-execute.md"
-cp "$SCRIPT_DIR/commands/fiftybox-local.md" "$COMMANDS_DIR/fiftybox-local.md"
-log "Installed commands/fiftybox-local.md → $COMMANDS_DIR/fiftybox-local.md"
-cp "$SCRIPT_DIR/commands/fiftybox-gpt-review.md" "$COMMANDS_DIR/fiftybox-gpt-review.md"
-log "Installed commands/fiftybox-gpt-review.md → $COMMANDS_DIR/fiftybox-gpt-review.md"
-# commands/fiftybox-local-execute.md is gitignored alongside its skill.
-if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-execute.md" ]]; then
-  cp "$SCRIPT_DIR/commands/fiftybox-local-execute.md" "$COMMANDS_DIR/fiftybox-local-execute.md"
-  log "Installed commands/fiftybox-local-execute.md → $COMMANDS_DIR/fiftybox-local-execute.md"
-else
-  log "Skipped commands/fiftybox-local-execute.md (not present in this checkout)"
-fi
+for cmd in fiftybox-orchestration fiftybox-plans fiftybox-execute \
+           fiftybox-local fiftybox-gpt-review fiftybox-local-execute \
+           fiftybox-cc-execute fiftybox-free-execute; do
+  wrapper="$COMMANDS_DIR/$cmd.md"
+  if [[ -f "$wrapper" ]]; then
+    rm -f "$wrapper"
+    log "Removed duplicate slash-command wrapper → $wrapper"
+  fi
+done
+log "Slash commands come from skills; no ~/.claude/commands wrappers installed"
 
 echo ""
 log "To configure agents: $SKILLS_DIR/configure.sh"

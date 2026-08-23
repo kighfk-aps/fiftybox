@@ -2,7 +2,6 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SKILL="$SCRIPT_DIR/skills/fiftybox-local/SKILL.md"
-COMMAND="$SCRIPT_DIR/commands/fiftybox-local.md"
 DISCOVER="$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py"
 PASS=0
 FAIL=0
@@ -32,9 +31,6 @@ has "$SKILL" "유료 모델로 임의 전환하지 않는다" "SKILL.md refuses 
 
 has "$SKILL" "Claude는 구현 파일을 직접 쓰거나 고치지 않는다" \
     "SKILL.md carries the no-direct-write prohibition"
-
-has "$COMMAND" "skills/fiftybox-local/SKILL.md" "slash command points at the skill body"
-has "$COMMAND" '$ARGUMENTS' "slash command forwards \$ARGUMENTS"
 
 echo ""
 echo "Results: $PASS passed, $FAIL failed"

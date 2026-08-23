@@ -16,12 +16,6 @@ else
     pass "skills/fiftybox-local/SKILL.md is trackable"
 fi
 
-if git check-ignore -q "commands/fiftybox-local.md"; then
-    fail "commands/fiftybox-local.md is still git-ignored"
-else
-    pass "commands/fiftybox-local.md is trackable"
-fi
-
 if git check-ignore -q "skills/fiftybox-local-execute/SKILL.md"; then
     pass "skills/fiftybox-local-execute/SKILL.md remains git-ignored"
 else

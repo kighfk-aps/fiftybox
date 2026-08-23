@@ -63,17 +63,17 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "configure.sh is executable" \
     || fail "configure.sh not executable"
 
-[[ -f "$COMMANDS_DIR/fiftybox-orchestration.md" ]] \
-    && pass "fiftybox-orchestration.md installed" \
-    || fail "fiftybox-orchestration.md not installed"
+[[ ! -e "$COMMANDS_DIR/fiftybox-orchestration.md" ]] \
+    && pass "fiftybox-orchestration.md command wrapper not installed" \
+    || fail "fiftybox-orchestration.md command wrapper still installed"
 
-[[ -f "$COMMANDS_DIR/fiftybox-plans.md" ]] \
-    && pass "fiftybox-plans.md command installed" \
-    || fail "fiftybox-plans.md command not installed"
+[[ ! -e "$COMMANDS_DIR/fiftybox-plans.md" ]] \
+    && pass "fiftybox-plans.md command wrapper not installed" \
+    || fail "fiftybox-plans.md command wrapper still installed"
 
-[[ -f "$COMMANDS_DIR/fiftybox-execute.md" ]] \
-    && pass "fiftybox-execute.md command installed" \
-    || fail "fiftybox-execute.md command not installed"
+[[ ! -e "$COMMANDS_DIR/fiftybox-execute.md" ]] \
+    && pass "fiftybox-execute.md command wrapper not installed" \
+    || fail "fiftybox-execute.md command wrapper still installed"
 
 [[ -f "$SKILLS_DIR_EXECUTE/scripts/diff_review.py" ]] \
     && pass "fiftybox-execute diff_review.py installed" \
@@ -83,9 +83,9 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "fiftybox-execute cc_preflight.py installed" \
     || fail "fiftybox-execute cc_preflight.py missing"
 
-[[ -f "$COMMANDS_DIR/fiftybox-local.md" ]] \
-    && pass "fiftybox-local slash command installed" \
-    || fail "fiftybox-local slash command not installed"
+[[ ! -e "$COMMANDS_DIR/fiftybox-local.md" ]] \
+    && pass "fiftybox-local command wrapper not installed" \
+    || fail "fiftybox-local command wrapper still installed"
 
 [[ -f "$GPT_REVIEW_SKILL_DIR/SKILL.md" ]] \
     && pass "fiftybox-gpt-review SKILL.md installed" \
@@ -95,9 +95,9 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "gpt_review.py installed" \
     || fail "gpt_review.py not installed"
 
-[[ -f "$COMMANDS_DIR/fiftybox-gpt-review.md" ]] \
-    && pass "fiftybox-gpt-review.md command installed" \
-    || fail "fiftybox-gpt-review.md command not installed"
+[[ ! -e "$COMMANDS_DIR/fiftybox-gpt-review.md" ]] \
+    && pass "fiftybox-gpt-review.md command wrapper not installed" \
+    || fail "fiftybox-gpt-review.md command wrapper still installed"
 
 [[ -f "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md" ]] \
     && pass "Codex fiftybox-plans skill installed" \
@@ -133,15 +133,9 @@ else
         || fail "fiftybox-local-execute installed although the source lacks it"
 fi
 
-if [[ -f "$SCRIPT_DIR/commands/fiftybox-local-execute.md" ]]; then
-    [[ -f "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
-        && pass "fiftybox-local-execute.md command installed" \
-        || fail "fiftybox-local-execute.md command not installed"
-else
-    [[ ! -e "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
-        && pass "fiftybox-local-execute.md absent from source and not installed" \
-        || fail "fiftybox-local-execute.md installed although the source lacks it"
-fi
+[[ ! -e "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
+    && pass "fiftybox-local-execute.md command wrapper not installed" \
+    || fail "fiftybox-local-execute.md command wrapper still installed"
 
 # ---------------------------------------------------------------------------
 # configure.sh: sets agents
@@ -240,9 +234,9 @@ fi
     && pass "fiftybox-execute scripts still installed without fiftybox-local-execute" \
     || fail "fiftybox-execute scripts missing when fiftybox-local-execute absent"
 
-[[ -f "$BARE_HOME/.claude/commands/fiftybox-execute.md" ]] \
-    && pass "slash commands still installed without fiftybox-local-execute" \
-    || fail "slash commands missing when fiftybox-local-execute absent"
+[[ ! -e "$BARE_HOME/.claude/commands/fiftybox-execute.md" ]] \
+    && pass "command wrappers still omitted without fiftybox-local-execute" \
+    || fail "command wrapper appeared when fiftybox-local-execute absent"
 
 [[ -f "$BARE_HOME/.claude/skills/fiftybox-local/SKILL.md" ]] \
     && pass "tracked fiftybox-local still installed without fiftybox-local-execute" \
