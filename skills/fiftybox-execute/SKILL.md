@@ -51,8 +51,8 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 슬래시 레이어의 `--provider`/`--model`은 아래 Model Resolution을 거쳐
 `orchestrate.py`의 `--implement-agent`/`--provider`/`--model`로 전달한다.
-생략하면 구 `fiftybox-execute`와 동일한 기본값
-`--provider opencode-go --model deepseek-v4-flash` (implement agent `pi`)를 쓴다.
+생략하면 기본값 `--provider grok --model grok-4.6`
+(implement agent `grok`)을 쓴다.
 
 ---
 
@@ -60,10 +60,10 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 | provider | 비고 |
 |---|---|
-| `opencode-go` (기본, `--model deepseek-v4-flash`) | 별도 인증 불필요. Pi CLI의 백엔드 |
+| `opencode-go` (`--model deepseek-v4-flash`) | 별도 인증 불필요. Pi CLI의 백엔드 |
 | `commandcode` | `cmd` 요금제 필요. Step 0 preflight로 확인 |
 | `pi` | Pi CLI. `--model glm-5.2` 등 |
-| `grok` | Grok Build. SuperGrok 요금제 필요, `grok inspect`로 로그인 확인 |
+| `grok` (기본, `--model grok-4.6`) | Grok Build. SuperGrok 요금제 필요, `grok inspect`로 로그인 확인 |
 
 CommandCode의 simple/complex tier 판정(Step 3)은 참고용으로 남기되 강제하지
 않는다 — `--model`을 직접 지정하면 그 tier 로직은 건너뛴다.
@@ -76,9 +76,9 @@ CommandCode의 simple/complex tier 판정(Step 3)은 참고용으로 남기되 �
 `--phase implement`와 `--phase deploy` 호출에 재사용한다.
 
 **기본값** (인자 생략):
-- `IMPL_AGENT=pi`
-- `IMPL_PROVIDER=opencode-go`
-- `IMPL_MODEL=deepseek-v4-flash`
+- `IMPL_AGENT=grok`
+- `IMPL_PROVIDER=opencode-go` (orchestrate 기본값 유지 — `grok` 에이전트는 이 토큰을 쓰지 않는다)
+- `IMPL_MODEL=grok-4.6`
 
 **`--provider`가 implement agent 이름일 때** (`commandcode`, `grok`, `pi`,
 `opencode`, `aider`, `gemini`, `qwen`, `cursor`, `codex`):
@@ -94,6 +94,8 @@ CommandCode의 simple/complex tier 판정(Step 3)은 참고용으로 남기되 �
 
 예시:
 - `/fiftybox-execute "add caching"`
+  → agent `grok`, model `grok-4.6`
+- `/fiftybox-execute "add caching" --provider opencode-go`
   → agent `pi`, provider `opencode-go`, model `deepseek-v4-flash`
 - `/fiftybox-execute "add caching" --provider commandcode --model zai-org/glm-5.2`
   → agent `commandcode`, model `zai-org/glm-5.2`
@@ -141,8 +143,9 @@ stdout JSON의 `status` 필드로 분기한다:
   선택받는다.
 - `ready` — 다음 단계로 진행한다.
 
-**`--provider grok`일 때** `grok inspect`가 `Project trusted: yes`를 보여야 한다.
-아니면 `grok login`을 안내하고 중단한다.
+**`--provider grok`일 때(기본값 포함)** `grok inspect`가 `Project trusted: yes`를
+보여야 한다. 아니면 `grok login`을 안내하고 중단한다. 인자를 생략한 기본 실행도
+이 preflight를 반드시 거친다.
 
 **`pi` / `opencode-go` 및 그 외 Pi 백엔드**는 preflight를 건너뛴다.
 
