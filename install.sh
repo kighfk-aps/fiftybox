@@ -101,6 +101,11 @@ mkdir -p "$LOCAL_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
 cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$LOCAL_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
+mkdir -p "$CODEX_LOCAL_SKILL_DIR/scripts" "$CODEX_LOCAL_SKILL_DIR/agents"
+cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$CODEX_LOCAL_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$CODEX_LOCAL_SKILL_DIR/scripts/"
+cp "$SCRIPT_DIR/skills/fiftybox-local/agents/openai.yaml" "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml"
+log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
 
 # Claude Code already exposes each installed skill as /skill-name. Matching
 # ~/.claude/commands/*.md wrappers made every fiftybox skill appear twice in

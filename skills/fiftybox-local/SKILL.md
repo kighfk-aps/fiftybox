@@ -1,6 +1,6 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local.
+description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
@@ -8,7 +8,7 @@ description: Use when implementation should run on local or free providers (open
 로컬·무료 provider로 구현 페이즈를 돌린다. 후보는 매 실행 실측 탐색한다 —
 무료 티어는 제공 모델과 할당량이 수시로 바뀐다.
 
-**핵심 루프:** Claude가 실패하는 테스트 작성(Red) → provider가 통과시킴(Green) → Claude 리뷰
+**핵심 루프:** 오케스트레이터(Claude/Codex)가 실패하는 테스트 작성(Red) → provider가 통과시킴(Green) → 오케스트레이터 리뷰
 
 **실행 방식:** 동적 병렬. 이번 실행에서 가용한(healthy) distinct 모델 수가
 배치의 최대 동시 실행 수다. 모델 1개면 순차, N개면 최대 N개 병렬 — 배치 내
@@ -20,8 +20,8 @@ description: Use when implementation should run on local or free providers (open
 
 ## ⛔ 절대 금지
 
-**Claude는 구현 파일을 직접 쓰거나 고치지 않는다.** 예외 없다. Claude가 이
-스킬에서 쓸 수 있는 파일은 두 가지뿐이다:
+**오케스트레이터는 구현 파일을 직접 쓰거나 고치지 않는다.** 예외 없다.
+Claude/Codex가 이 스킬에서 쓸 수 있는 파일은 두 가지뿐이다:
 1. 테스트 파일 (Red 페이즈)
 2. 아티팩트 문서 (`<artifactDir>/design.md` 등)
 
@@ -33,6 +33,7 @@ orchestrate.py가 실패하면 사용자에게 보고한다. 대신 구현하지
 
 ```
 /fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
+$fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 ```
 
 `--provider`/`--model`을 명시하면 탐색을 건너뛰고 그 목록만 후보로 쓴다(수동
@@ -156,9 +157,9 @@ JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다. 설계 문서를 복
 - Task D → opencode/nemotron-3-ultra-free
 ```
 
-### Step 4: Claude가 테스트 작성 (Red)
+### Step 4: 오케스트레이터가 테스트 작성 (Red)
 
-라운드의 각 태스크에 대해 Claude가 실패하는 테스트를 쓴다.
+라운드의 각 태스크에 대해 Claude/Codex 오케스트레이터가 실패하는 테스트를 쓴다.
 
 `<artifactDir>/tests/`와 실제 프로젝트 테스트 디렉터리 양쪽에 쓴다.
 
@@ -188,9 +189,9 @@ nohup python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 라운드 내 모든 태스크가 끝날 때까지 기다린다.
 
-### Step 6: Claude 리뷰 게이트
+### Step 6: 오케스트레이터 리뷰 게이트
 
-태스크마다 Claude가 4단계 리뷰를 한다.
+태스크마다 Claude/Codex 오케스트레이터가 4단계 리뷰를 한다.
 
 **1단계 — 테스트 결과:** Step 4의 테스트를 전부 돌린다. 하나라도 실패하면 실패
 출력과 함께 Step 5를 재실행한다.
@@ -283,8 +284,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 이 스킬 고유:
 
-- **Claude는 구현 코드를 직접 쓰지 않는다.** 계획서 내용, 속도, 모델 가용성과
-  무관하다
+- **Claude/Codex 오케스트레이터는 구현 코드를 직접 쓰지 않는다.** 계획서
+  내용, 속도, 모델 가용성과 무관하다
 - provider는 테스트 파일을 수정하지 않는다. 수정했으면 되돌리고 재실행한다
 - `--dangerously-skip-permissions`는 orchestrate가 만든 격리된 워크트리 안에서만
   유효하다

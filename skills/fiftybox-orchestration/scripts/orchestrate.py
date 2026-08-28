@@ -91,6 +91,11 @@ BUILTIN_AGENTS: dict[str, dict] = {
     "codex": {"cmd": ["codex", "exec", "--model", "{model}",
                       "-s", "read-only", "--ephemeral", "--skip-git-repo-check",
                       "--ignore-user-config", "{prompt}\n{task}"]},
+    # Keep the review adapter above immutable.  Execute workflows opt into this
+    # separate workspace-scoped adapter when Codex is assigned an implementation task.
+    "codex-write": {"cmd": ["codex", "exec", "--model", "{model}",
+                            "-s", "workspace-write", "--ephemeral",
+                            "--skip-git-repo-check", "{prompt}\n{task}"]},
     "commandcode": {"cmd": ["cmd", "-p", "{prompt}\n{task}", "-m", "{model}",
                             "--yolo", "--trust", "--no-session",
                             "--skip-onboarding", "--no-auto-update"]},

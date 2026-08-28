@@ -15,10 +15,13 @@ lacks() { if [[ -f "$1" ]] && ! grep -qF -- "$2" "$1"; then pass "$3"; else fail
 # --- invocation surface ---------------------------------------------------
 has "$SKILL" "--provider <id>" "SKILL.md documents --provider"
 has "$SKILL" "--model <id>" "SKILL.md documents --model"
-has "$SKILL" "opencode-go" "SKILL.md keeps opencode-go/deepseek-v4-flash as the fallback default"
-has "$SKILL" "deepseek-v4-flash" "SKILL.md names the fallback model"
+has "$SKILL" "deterministic lane allocator" "SKILL.md assigns default work by lane"
+has "$SKILL" "commandcode" "SKILL.md includes the CommandCode execution lane"
+has "$SKILL" "zai-coding" "SKILL.md includes the Z.AI Coding Plan lane"
+has "$SKILL" "glm-5.3-flash" "SKILL.md defaults Pi Coding Plan work to GLM-5.3-Flash"
+has "$SKILL" "codex-write" "SKILL.md documents the writable Codex lane"
+has "$SKILL" "gpt-5.6-luna" "SKILL.md assigns Codex work to GPT-5.6-luna"
 has "$SKILL" "grok" "SKILL.md lists grok as a provider option"
-has "$SKILL" "commandcode" "SKILL.md lists commandcode as a provider option"
 has "$SKILL" "--implement-agent" "SKILL.md passes --implement-agent through to orchestrate.py"
 
 # --- absorbed cc-execute contract -----------------------------------------

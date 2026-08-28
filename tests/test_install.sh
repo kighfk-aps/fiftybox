@@ -21,6 +21,7 @@ LOCAL_EXECUTE_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-local-execute"
 SKILLS_DIR_EXECUTE="$INSTALL_ROOT/.claude/skills/fiftybox-execute"
 GPT_REVIEW_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-gpt-review"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
+CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
@@ -114,6 +115,18 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$LOCAL_SKILL_DIR/scripts/discover_free_models.py" ]] \
     && pass "fiftybox-local discover_free_models.py installed" \
     || fail "fiftybox-local discover_free_models.py missing"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
+    && pass "Codex fiftybox-local skill installed" \
+    || fail "Codex fiftybox-local skill not installed"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/scripts/discover_free_models.py" ]] \
+    && pass "Codex fiftybox-local discover_free_models.py installed" \
+    || fail "Codex fiftybox-local discover_free_models.py missing"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
+    && pass "Codex fiftybox-local OpenAI metadata installed" \
+    || fail "Codex fiftybox-local OpenAI metadata not installed"
 
 if [[ -f "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" ]]; then
     [[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \

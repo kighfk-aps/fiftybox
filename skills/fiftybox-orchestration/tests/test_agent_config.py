@@ -22,7 +22,7 @@ import orchestrate as orc  # noqa: E402
 class TestBuiltinAgents:
     def test_all_builtin_agents_present(self):
         expected = {"pi", "opencode", "aider", "gemini", "qwen", "cursor", "codex",
-                    "commandcode", "grok"}
+                    "codex-write", "commandcode", "grok"}
         assert set(orc.BUILTIN_AGENTS.keys()) == expected
 
     def test_codex_cmd_is_read_only_and_isolated(self):
@@ -42,6 +42,19 @@ class TestBuiltinAgents:
             provider="", adapters_dir=tmp_path,
         )
         assert "gpt-5.6-terra" in cmd
+        assert cmd[-1] == "P\nT"
+
+    def test_codex_write_cmd_is_workspace_scoped(self, tmp_path):
+        cmd = orc.build_agent_cmd(
+            "codex-write", {"agents": dict(orc.BUILTIN_AGENTS)},
+            prompt="P", task="T", model="gpt-5.6-luna",
+            provider="", adapters_dir=tmp_path,
+        )
+        assert cmd[:2] == ["codex", "exec"]
+        assert "gpt-5.6-luna" in cmd
+        assert "workspace-write" in cmd
+        assert "read-only" not in cmd
+        assert "--ignore-user-config" not in cmd
         assert cmd[-1] == "P\nT"
 
     def test_each_agent_has_cmd_list(self):
