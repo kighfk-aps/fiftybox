@@ -77,17 +77,31 @@ deterministic lane allocator로 네 실행 lane 중 하나에 배정한다.
 
 **기본 lane allocator** (`--provider`/`--model` 모두 생략):
 
-| 우선순위 | 태스크 성격 | executor |
+각 우선순위 자리가 기본으로 어떤 provider/model을 쓰는지는
+`~/.claude/fiftybox-config.json`의 `lane_priority` 배열과 각 provider의
+`enabled`/`models`로 정해진다. 아래 표의 executor 열은 설정 파일의 기본값
+기준이다 — provider를 껐다 켰다 해도 태스크 성격→우선순위 자리 매핑 자체는
+바뀌지 않는다.
+
+| 우선순위 | 태스크 성격 | executor (기본 설정 기준) |
 |---|---|---|
 | 1 | 보안·데이터 무결성·동시성·새 핵심 인터페이스처럼 강한 추론과 제한적 소유 파일이 필요한 작업 | `codex-write` / `gpt-5.6-luna` |
 | 2 | 화면·이미지·브라우저 검증 또는 넓은 문맥을 가진 독립 구현 작업 | `pi` / `zai-coding` / `glm-5.3-flash` |
 | 3 | 외부 API·배포 설정·기존 Grok 도구/계정 맥락이 직접 필요한 통합 작업 | `grok` / `grok-4.6` |
 | 4 | 위에 속하지 않는 파일 국소적·결정적인 구현 및 테스트 통과 작업 | `commandcode` / `qwen/qwen3.7-flash` |
 
+실제 배정은 각 우선순위 자리 인덱스로 `resolve_lane`을 계산한 결과를 쓴다:
+`lane_priority[i]`가 `enabled: false`(또는 `enabled: true`지만 켜진 모델이
+하나도 없음)면 `lane_priority`의 다음 값으로 넘어간다. 그 provider의 모델은
+`models`(Pi는 선택된 backend의 `models`) 중 켜진 것 중 첫 번째를 쓴다.
+`lane_priority`의 끝까지 가도 켜진 provider가 없으면 그 우선순위 자리는
+배정하지 않는다 — 그 자리에 해당하는 태스크가 실제로 있을 때만 중단하고
+사용자에게 `/fiftybox-config`로 최소 1개는 켜달라고 안내한다.
+
 같은 파일을 소유하거나 선행 의존성이 있는 태스크는 같은 배치로 병렬화하지 않는다.
-어느 lane에도 명확히 속하지 않는 작업은 4번 CommandCode로 시작하며, 실패 재시도도
-lane을 바꾸지 않는다. lane 간 fallback은 실패 분류와 사용량 근거를 artifact에 남긴 뒤에만
-사용한다.
+자동 fallback으로 배정이 바뀌면 그 사실과 사유를 `model-choice.json`에 남긴다.
+실패 재시도는 fallback으로 정해진 lane을 그대로 재사용하며 lane을 다시
+바꾸지 않는다.
 
 **`--provider`가 implement agent 이름일 때** (`commandcode`, `grok`, `pi`,
 `codex-write`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`, `codex`):
@@ -136,8 +150,16 @@ lane을 바꾸지 않는다. lane 간 fallback은 실패 분류와 사용량 근
 
 provider에 따라 조건부다.
 
-기본 lane mode에서는 네 lane을 모두 확인한다. 명시 override에서는 선택한 lane만
-확인한다. CommandCode lane 확인은 `cmd` 설치·인증·모델 가용성 검사다:
+**먼저 `~/.claude/fiftybox-config.json`을 읽는다** (`/fiftybox-config` 스킬이
+관리하는 설정 파일). `providers.<name>.enabled`가 `false`인 provider는 이번
+실행에서 존재하지 않는 것으로 취급한다 — 로그인·구독 확인조차 하지 않는다.
+파일이 없으면 아직 `/fiftybox-config`를 한 번도 실행하지 않았다는 뜻이니, 리포
+기본값(`lane_priority: ["codex-write", "pi", "grok", "commandcode"]`, 모두
+`enabled: true`)을 그대로 쓴다.
+
+기본 lane mode에서는 설정에서 `enabled`인 lane만 확인한다. 명시 override에서는
+선택한 lane만 확인한다. CommandCode lane 확인은 `cmd` 설치·인증·모델 가용성
+검사다:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-execute/scripts/cc_preflight.py \
