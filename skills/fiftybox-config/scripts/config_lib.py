@@ -54,3 +54,69 @@ def save_config(config: dict[str, Any], path: Path | None = None) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(config, f, indent=2)
         f.write("\n")
+
+
+def first_enabled_model(models: dict[str, bool]) -> str | None:
+    for name, enabled in models.items():
+        if enabled:
+            return name
+    return None
+
+
+def _pi_has_enabled_model(pi_provider_cfg: dict[str, Any]) -> bool:
+    for backend in pi_provider_cfg.get("backends", {}).values():
+        if first_enabled_model(backend.get("models", {})) is not None:
+            return True
+    return False
+
+
+def resolve_lane(config: dict[str, Any], slot_index: int) -> str | None:
+    """Return the provider that fills priority slot `slot_index`.
+
+    Walks forward through config["lane_priority"] starting at slot_index,
+    returning the first provider that is enabled and has at least one
+    enabled model (providers with no "models" map at all, like opencode,
+    count as available whenever enabled=true). Returns None if nothing in
+    the remainder of lane_priority is available.
+    """
+    lane_priority = config["lane_priority"]
+    for provider in lane_priority[slot_index:]:
+        provider_cfg = config["providers"].get(provider)
+        if provider_cfg is None or not provider_cfg.get("enabled"):
+            continue
+        if provider == "pi":
+            if _pi_has_enabled_model(provider_cfg):
+                return provider
+            continue
+        models = provider_cfg.get("models")
+        if models is None:
+            return provider
+        if first_enabled_model(models) is not None:
+            return provider
+    return None
+
+
+def _models_map(config: dict[str, Any], provider: str, backend: str | None) -> dict[str, bool]:
+    provider_cfg = config["providers"][provider]
+    if backend is not None:
+        return provider_cfg["backends"][backend]["models"]
+    return provider_cfg["models"]
+
+
+def add_model(
+    config: dict[str, Any],
+    provider: str,
+    model: str,
+    backend: str | None = None,
+    enabled: bool = True,
+) -> None:
+    _models_map(config, provider, backend)[model] = enabled
+
+
+def remove_model(
+    config: dict[str, Any],
+    provider: str,
+    model: str,
+    backend: str | None = None,
+) -> None:
+    _models_map(config, provider, backend).pop(model, None)

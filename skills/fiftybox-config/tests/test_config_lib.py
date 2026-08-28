@@ -56,3 +56,87 @@ def test_save_and_reload_round_trips(tmp_path):
     reloaded, warning = cl.load_config(path)
     assert warning is None
     assert reloaded["providers"]["grok"]["enabled"] is False
+
+
+def test_first_enabled_model_returns_first_true():
+    assert cl.first_enabled_model({"a": False, "b": True, "c": True}) == "b"
+
+
+def test_first_enabled_model_returns_none_when_all_false():
+    assert cl.first_enabled_model({"a": False}) is None
+
+
+def test_first_enabled_model_returns_none_for_empty_map():
+    assert cl.first_enabled_model({}) is None
+
+
+def test_resolve_lane_picks_first_provider_in_priority():
+    cfg = cl.default_config()
+    assert cl.resolve_lane(cfg, 0) == "codex-write"
+
+
+def test_resolve_lane_falls_through_disabled_provider():
+    cfg = cl.default_config()
+    cfg["providers"]["codex-write"]["enabled"] = False
+    assert cl.resolve_lane(cfg, 0) == "pi"
+
+
+def test_resolve_lane_skips_pi_when_all_backend_models_disabled():
+    cfg = cl.default_config()
+    cfg["providers"]["codex-write"]["enabled"] = False
+    for backend in cfg["providers"]["pi"]["backends"].values():
+        for model in backend["models"]:
+            backend["models"][model] = False
+    assert cl.resolve_lane(cfg, 0) == "grok"
+
+
+def test_resolve_lane_treats_missing_models_map_as_available():
+    cfg = cl.default_config()
+    for provider in ("codex-write", "pi", "grok", "commandcode"):
+        cfg["providers"][provider]["enabled"] = False
+    cfg["lane_priority"].append("opencode")
+    assert cl.resolve_lane(cfg, 0) == "opencode"
+
+
+def test_resolve_lane_returns_none_when_all_disabled():
+    cfg = cl.default_config()
+    for provider in cfg["providers"].values():
+        provider["enabled"] = False
+    assert cl.resolve_lane(cfg, 0) is None
+
+
+def test_resolve_lane_respects_slot_index():
+    cfg = cl.default_config()
+    # slot 1 should never look at slot 0's provider first
+    assert cl.resolve_lane(cfg, 1) == "pi"
+
+
+def test_add_model_on_flat_provider():
+    cfg = cl.default_config()
+    cl.add_model(cfg, "grok", "grok-5.0")
+    assert cfg["providers"]["grok"]["models"]["grok-5.0"] is True
+
+
+def test_add_model_disabled():
+    cfg = cl.default_config()
+    cl.add_model(cfg, "grok", "grok-5.0-preview", enabled=False)
+    assert cfg["providers"]["grok"]["models"]["grok-5.0-preview"] is False
+
+
+def test_add_model_on_pi_backend():
+    cfg = cl.default_config()
+    cl.add_model(cfg, "pi", "glm-6.0-preview", backend="zai-coding")
+    assert cfg["providers"]["pi"]["backends"]["zai-coding"]["models"]["glm-6.0-preview"] is True
+
+
+def test_remove_model():
+    cfg = cl.default_config()
+    cl.add_model(cfg, "grok", "grok-5.0")
+    cl.remove_model(cfg, "grok", "grok-5.0")
+    assert "grok-5.0" not in cfg["providers"]["grok"]["models"]
+
+
+def test_remove_model_on_pi_backend():
+    cfg = cl.default_config()
+    cl.remove_model(cfg, "pi", "glm-5.3-flash", backend="zai-coding")
+    assert "glm-5.3-flash" not in cfg["providers"]["pi"]["backends"]["zai-coding"]["models"]
