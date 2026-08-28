@@ -1,0 +1,4 @@
+name: fiftybox-local
+display_name: Fiftybox Local
+description: Run the Fiftybox TDD pipeline with healthy OpenCode free models and Modal Qwen3.8-27B.
+default_prompt: '$fiftybox-local "implement the requested design with local and free providers"'

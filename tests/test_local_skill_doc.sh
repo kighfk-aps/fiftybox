@@ -29,7 +29,7 @@ has "$SKILL" "서로 다른" "SKILL.md requires distinct models per parallel tas
 has "$SKILL" "smoke" "SKILL.md checks discovery smoke status"
 has "$SKILL" "유료 모델로 임의 전환하지 않는다" "SKILL.md refuses to fall back to paid models"
 
-has "$SKILL" "Claude는 구현 파일을 직접 쓰거나 고치지 않는다" \
+has "$SKILL" "오케스트레이터는 구현 파일을 직접 쓰거나 고치지 않는다" \
     "SKILL.md carries the no-direct-write prohibition"
 
 echo ""

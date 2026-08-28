@@ -1,6 +1,6 @@
 ---
 name: fiftybox-execute
-description: Use when a design is already done and implementation should be handed to a paid/cloud provider (opencode-go, commandcode, pi, grok) via parallel-batch TDD. Also when the user invokes /fiftybox-execute.
+description: Use when a design is already done and implementation should be handed to paid/cloud execution lanes (CommandCode, Pi via Z.AI Coding Plan, writable Codex, Grok) through parallel-batch TDD. Also when the user invokes /fiftybox-execute.
 ---
 
 # Fiftybox Execute
@@ -51,8 +51,8 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 슬래시 레이어의 `--provider`/`--model`은 아래 Model Resolution을 거쳐
 `orchestrate.py`의 `--implement-agent`/`--provider`/`--model`로 전달한다.
-생략하면 기본값 `--provider grok --model grok-4.6`
-(implement agent `grok`)을 쓴다.
+둘 다 생략하면 provider 하나를 전역 기본값으로 박지 않고, Step 3에서 각 태스크를
+deterministic lane allocator로 네 실행 lane 중 하나에 배정한다.
 
 ---
 
@@ -60,49 +60,62 @@ orchestrate.py가 느리거나 응답이 없어도, 서브에이전트가 더 �
 
 | provider | 비고 |
 |---|---|
-| `opencode-go` (`--model deepseek-v4-flash`) | 별도 인증 불필요. Pi CLI의 백엔드 |
+| `pi` (`--provider zai-coding --model glm-5.3-flash`) | 기본 Pi lane. Z.AI Coding Plan 경로를 쓴다 |
 | `commandcode` | `cmd` 요금제 필요. Step 0 preflight로 확인 |
-| `pi` | Pi CLI. `--model glm-5.2` 등 |
-| `grok` (기본, `--model grok-4.6`) | Grok Build. SuperGrok 요금제 필요, `grok inspect`로 로그인 확인 |
-
-CommandCode의 simple/complex tier 판정(Step 3)은 참고용으로 남기되 강제하지
-않는다 — `--model`을 직접 지정하면 그 tier 로직은 건너뛴다.
+| `codex-write` (`--model gpt-5.6-luna`) | writable Codex lane. orchestrate가 이 agent 이름을 지원해야 한다 |
+| `grok` (`--model grok-4.6`) | Grok Build. SuperGrok 요금제 필요, `grok inspect`로 로그인 확인 |
+| `opencode-go` (`--model deepseek-v4-flash`) | Pi 백엔드 강제 override가 필요할 때만 명시적으로 사용 |
 
 ---
 
 ## Model Resolution
 
-호출 인자에서 `--provider`, `--model`을 한 번만 파싱해 저장하고, 이후 모든
-`--phase implement`와 `--phase deploy` 호출에 재사용한다.
+`--provider`와 `--model`을 모두 지정하면 사용자의 명시적 선택을 모든 태스크에
+그대로 적용한다. 하나라도 생략하면 아래 lane allocator가 태스크마다
+`TASK_AGENT`/`TASK_PROVIDER`/`TASK_MODEL`을 정하고, implement와 retry에는 그
+결과를 재사용한다. artifact의 `model-choice.json`에는 태스크별 결과를 남긴다.
 
-**기본값** (인자 생략):
-- `IMPL_AGENT=grok`
-- `IMPL_PROVIDER=opencode-go` (orchestrate 기본값 유지 — `grok` 에이전트는 이 토큰을 쓰지 않는다)
-- `IMPL_MODEL=grok-4.6`
+**기본 lane allocator** (`--provider`/`--model` 모두 생략):
+
+| 우선순위 | 태스크 성격 | executor |
+|---|---|---|
+| 1 | 보안·데이터 무결성·동시성·새 핵심 인터페이스처럼 강한 추론과 제한적 소유 파일이 필요한 작업 | `codex-write` / `gpt-5.6-luna` |
+| 2 | 화면·이미지·브라우저 검증 또는 넓은 문맥을 가진 독립 구현 작업 | `pi` / `zai-coding` / `glm-5.3-flash` |
+| 3 | 외부 API·배포 설정·기존 Grok 도구/계정 맥락이 직접 필요한 통합 작업 | `grok` / `grok-4.6` |
+| 4 | 위에 속하지 않는 파일 국소적·결정적인 구현 및 테스트 통과 작업 | `commandcode` / `qwen/qwen3.7-flash` |
+
+같은 파일을 소유하거나 선행 의존성이 있는 태스크는 같은 배치로 병렬화하지 않는다.
+어느 lane에도 명확히 속하지 않는 작업은 4번 CommandCode로 시작하며, 실패 재시도도
+lane을 바꾸지 않는다. lane 간 fallback은 실패 분류와 사용량 근거를 artifact에 남긴 뒤에만
+사용한다.
 
 **`--provider`가 implement agent 이름일 때** (`commandcode`, `grok`, `pi`,
-`opencode`, `aider`, `gemini`, `qwen`, `cursor`, `codex`):
+`codex-write`, `opencode`, `aider`, `gemini`, `qwen`, `cursor`, `codex`):
 - `IMPL_AGENT=<provider>`
-- `IMPL_PROVIDER`는 orchestrate 기본값(`opencode-go`)을 유지한다. 이 에이전트들은
-  `{provider}` 토큰을 쓰지 않는다.
-- `IMPL_MODEL`은 `--model`이 있으면 그 값, 없으면 orchestrate 기본값.
+- `pi`는 `IMPL_PROVIDER=zai-coding`, `IMPL_MODEL=glm-5.3-flash`를 기본으로 쓴다.
+- `commandcode`/`codex-write`/`grok`는 모델 생략 시 각각
+  `qwen/qwen3.7-flash`/`gpt-5.6-luna`/`grok-4.6`을 쓴다.
+- 그 외 agent는 orchestrate 기본 provider/model을 유지한다.
 
 **`--provider`가 Pi 백엔드일 때** (`opencode-go`, `zai-coding`, `modal-qwen38` 등):
 - `IMPL_AGENT=pi`
 - `IMPL_PROVIDER=<provider>`
-- `IMPL_MODEL`은 `--model`이 있으면 그 값, 없으면 `deepseek-v4-flash`.
+- `IMPL_MODEL`은 `--model`이 있으면 그 값, `zai-coding`이면 `glm-5.3-flash`,
+  그 외에는 `deepseek-v4-flash`.
 
 예시:
 - `/fiftybox-execute "add caching"`
-  → agent `grok`, model `grok-4.6`
+  → 태스크 성격별로 위 네 lane 중 하나
+- `/fiftybox-execute "add caching" --provider zai-coding`
+  → agent `pi`, provider `zai-coding`, model `glm-5.3-flash`
 - `/fiftybox-execute "add caching" --provider opencode-go`
   → agent `pi`, provider `opencode-go`, model `deepseek-v4-flash`
 - `/fiftybox-execute "add caching" --provider commandcode --model zai-org/glm-5.2`
   → agent `commandcode`, model `zai-org/glm-5.2`
 - `/fiftybox-execute "add caching" --provider grok --model grok-4.6`
   → agent `grok`, model `grok-4.6`
-- `/fiftybox-execute "add caching" --provider pi --model glm-5.2`
-  → agent `pi`, provider `opencode-go`, model `glm-5.2`
+- `/fiftybox-execute "add caching" --provider codex-write --model gpt-5.6-luna`
+  → agent `codex-write`, model `gpt-5.6-luna`
 
 ---
 
@@ -123,7 +136,8 @@ CommandCode의 simple/complex tier 판정(Step 3)은 참고용으로 남기되 �
 
 provider에 따라 조건부다.
 
-**`--provider commandcode`일 때만** `cmd` 설치·인증·모델 가용성을 확인한다:
+기본 lane mode에서는 네 lane을 모두 확인한다. 명시 override에서는 선택한 lane만
+확인한다. CommandCode lane 확인은 `cmd` 설치·인증·모델 가용성 검사다:
 
 ```bash
 python3 ~/.claude/skills/fiftybox-execute/scripts/cc_preflight.py \
@@ -143,11 +157,12 @@ stdout JSON의 `status` 필드로 분기한다:
   선택받는다.
 - `ready` — 다음 단계로 진행한다.
 
-**`--provider grok`일 때(기본값 포함)** `grok inspect`가 `Project trusted: yes`를
-보여야 한다. 아니면 `grok login`을 안내하고 중단한다. 인자를 생략한 기본 실행도
-이 preflight를 반드시 거친다.
+Grok lane 확인에서는 `grok inspect`가 `Project trusted: yes`를 보여야 한다. 아니면
+`grok login`을 안내하고 중단한다.
 
-**`pi` / `opencode-go` 및 그 외 Pi 백엔드**는 preflight를 건너뛴다.
+Pi Coding Plan lane 확인에서는 `pi --list-models zai-coding`에 `glm-5.3-flash`가
+보여야 한다. `codex-write` lane은 `codex exec --help`가 성공하고 `workspace-write`
+sandbox를 지원하는지만 확인한다.
 
 ### Step 1 — 설계 수집
 
@@ -176,40 +191,30 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다. 설계 문서를 아티팩트
 디렉터리에 복사한다. Step 0 preflight를 돌렸다면 그 JSON을
-`<artifactDir>/cc-preflight.json`에 기록한다. 해석된
-`IMPL_AGENT`/`IMPL_PROVIDER`/`IMPL_MODEL`을 `<artifactDir>/model-choice.json`에
+`<artifactDir>/cc-preflight.json`에 기록한다. 해석된 태스크별
+`TASK_AGENT`/`TASK_PROVIDER`/`TASK_MODEL`을 `<artifactDir>/model-choice.json`에
 남긴다.
 
-### Step 3 — 태스크 분해와 참고용 tier 배정
+### Step 3 — 태스크 분해와 lane 배정
 
 설계를 원자적 구현 단위로 쪼개고 의존성을 파악해 병렬 배치를 만든다. 두 태스크가
 독립이려면 서로 다른 파일을 건드리고, 데이터·함수 의존이 없고, 격리 테스트가
 가능해야 한다.
 
-CommandCode를 쓸 때만 각 태스크에 `simple` / `complex` tier와 판정 근거 한 줄을
-붙여 `<artifactDir>/task-batches.md`에 쓴다. `--model`이 이미 있으면 tier 로직은
-건너뛰고 그 모델을 모든 태스크에 쓴다.
+각 태스크에 소유 파일, lane, lane 선택 근거 한 줄을 붙여
+`<artifactDir>/task-batches.md`에 쓴다. `--provider`와 `--model`을 모두 명시하면
+lane allocator를 건너뛰고 그 선택을 모든 태스크에 쓴다.
 
 ```markdown
 ## Task Batches
 
 ### Batch 1 (parallel)
-- Task A: <설명> — 파일: [목록] — tier: simple (기존 패턴 복제, 파일 1개)
-- Task B: <설명> — 파일: [목록] — tier: complex (새 인터페이스 설계, 파일 4개)
+- Task A: <설명> — 파일: [목록] — lane: commandcode/qwen/qwen3.7-flash (기존 패턴 복제, 파일 1개)
+- Task B: <설명> — 파일: [목록] — lane: codex-write/gpt-5.6-luna (새 핵심 인터페이스)
 
 ### Batch 2 (parallel, after Batch 1)
-- Task D: <설명> — 파일: [목록], 선행: Task A — tier: simple
+- Task D: <설명> — 파일: [목록], 선행: Task A — lane: pi/zai-coding/glm-5.3-flash (시각 검증 포함)
 ```
-
-참고용 complex 판정 기준 — 아래 중 하나라도 해당하면 complex:
-- 편집 대상 파일이 3개 이상
-- 새 추상화나 인터페이스를 설계해야 한다 (기존 패턴 복제가 아니다)
-- 동시성, 에러 처리, 보안 경계가 얽혀 있다
-- 테스트가 5개를 넘거나 통합 시나리오를 포함한다
-
-CommandCode에서 `--model`을 생략했고 tier를 쓰는 경우:
-- simple → `qwen/qwen3.7-flash`
-- complex → `zai-org/glm-5.2`
 
 태스크가 하나거나 전부 강결합이면 순차 모드로 떨어진다.
 
@@ -248,15 +253,15 @@ CommandCode에서 `--model`을 생략했고 tier를 쓰는 경우:
 > ⛔ 이 단계에서 Claude는 구현 코드를 쓰지 않는다. 구현은 orchestrate.py가
 > detached로 실행하는 provider만이 만든다.
 
-배치 내 태스크마다 Agent 하나씩 띄우고, 각 Agent는 해석된 모델로 orchestrate를
+배치 내 태스크마다 Agent 하나씩 띄우고, 각 Agent는 해당 태스크에 배정된 lane으로 orchestrate를
 **detached 실행**한다:
 
 ```bash
 nohup python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>" \
+  --implement-agent "<TASK_AGENT>" --provider "<TASK_PROVIDER>" \
+  --model "<TASK_MODEL>" \
   --skip-verify \
   > "<artifactDir>/implement-task-N.out" 2>&1 &
 ```
@@ -414,8 +419,8 @@ advisory 리뷰이고, 6a는 execute가 자체 스크립트로 도는 **구현 d
 nohup python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<실패 태스크>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>" --skip-verify \
+  --implement-agent "<TASK_AGENT>" --provider "<TASK_PROVIDER>" \
+  --model "<TASK_MODEL>" --skip-verify \
   --is-retry --feedback "<테스트 실패 출력>" \
   > "<artifactDir>/implement-task-N-retry.out" 2>&1 &
 ```
@@ -453,12 +458,12 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<작업>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>"
+  --implement-agent "<DEPLOY_AGENT>" --provider "<DEPLOY_PROVIDER>" \
+  --model "<DEPLOY_MODEL>"
 ```
 
-`--implement-agent`는 implement뿐 아니라 deploy 페이즈에도 같은 에이전트를
-적용한다. 배포 설정이 감지되지 않으면 자동으로 건너뛴다.
+deploy는 배포 태스크에 배정된 lane을 사용한다. 배포 설정이 감지되지 않으면 자동으로
+건너뛴다.
 
 ### Step 10 — cleanup (Phase 8)
 
@@ -564,8 +569,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<작업>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>"
+  --implement-agent "<DEPLOY_AGENT>" --provider "<DEPLOY_PROVIDER>" \
+  --model "<DEPLOY_MODEL>"
 ```
 
 deploy-only에서는 최소 artifact dir과 `complete.status: "success"`인 summary.json을
