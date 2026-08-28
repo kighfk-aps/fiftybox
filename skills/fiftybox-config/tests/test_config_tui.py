@@ -153,7 +153,7 @@ def test_render_draws_header_and_provider_rows_without_raising():
     stdscr = _FakeStdscr()
     tui.render(stdscr, state)
     assert stdscr.lines  # something was drawn
-    joined = " ".join(str(line[-1]) for line in stdscr.lines if isinstance(line[-1], str))
+    joined = " ".join(str(elem) for line in stdscr.lines for elem in line if isinstance(elem, str))
     assert "grok" in joined
 
 

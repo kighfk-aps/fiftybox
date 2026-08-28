@@ -139,7 +139,7 @@ def render(stdscr, state: State) -> None:
         mark = "[x]" if row.checked else "[ ]"
         indent = "  " * row.depth
         attr = curses.A_REVERSE if i == state.cursor else curses.A_NORMAL
-        stdscr.addstr(i + 2, 0, f"{indent}{mark} {row.label}", attr=attr)
+        stdscr.addstr(i + 2, 0, f"{indent}{mark} {row.label}", attr)
     if state.message:
         stdscr.addstr(len(rows) + 3, 0, state.message)
     stdscr.refresh()
