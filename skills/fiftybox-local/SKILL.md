@@ -49,7 +49,9 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 - `providers.opencode.enabled`가 `false`면 1번(무료 티어 탐색) 자체를 생략한다.
 - `providers.pi.backends.modal-qwen38`의 `models`에 켜진 모델이 하나도 없으면
   2번(Modal 항상 포함)을 생략한다 — 예를 들어 지출을 잠깐 막고 싶을 때 끌 수
-  있다.
+  있다. `providers.pi.enabled`(Pi CLI 전체 스위치)는 이 판단에 영향을 주지
+  않는다 — Modal은 Pi CLI 구독과 무관한 별도의 pay-per-use 배포이기
+  때문이다.
 
 설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
 기본값(둘 다 켜짐)을 그대로 쓴다.

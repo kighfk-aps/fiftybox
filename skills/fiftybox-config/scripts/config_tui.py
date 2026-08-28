@@ -104,8 +104,12 @@ def add_model_row(state: State, model_name: str) -> State:
         return state
     row = rows[state.cursor]
     if row.kind == "provider":
-        if "backends" in state.config["providers"][row.provider]:
+        provider_cfg = state.config["providers"][row.provider]
+        if "backends" in provider_cfg:
             state.message = "Expand a Pi backend before adding a model (press Enter first)"
+            return state
+        if "models" not in provider_cfg:
+            state.message = "This provider has no editable model list"
             return state
         cl.add_model(state.config, row.provider, model_name)
     else:
@@ -131,17 +135,27 @@ def delete_selected_row(state: State) -> State:
 def render(stdscr, state: State) -> None:
     stdscr.erase()
     rows = visible_rows(state)
-    stdscr.addstr(
-        0, 0,
-        "fiftybox-config  (space=toggle  enter=expand  a=add  d=delete  s=save  q=quit)",
-    )
+    max_y, max_x = stdscr.getmaxyx()
+
+    def _draw(y: int, x: int, text: str, attr=None) -> None:
+        if y < 0 or y >= max_y:
+            return
+        text = text[: max(0, max_x - 1)]
+        if not text:
+            return
+        if attr is None:
+            stdscr.addstr(y, x, text)
+        else:
+            stdscr.addstr(y, x, text, attr)
+
+    _draw(0, 0, "fiftybox-config  (space=toggle  enter=expand  a=add  d=delete  s=save  q=quit)")
     for i, row in enumerate(rows):
         mark = "[x]" if row.checked else "[ ]"
         indent = "  " * row.depth
         attr = curses.A_REVERSE if i == state.cursor else curses.A_NORMAL
-        stdscr.addstr(i + 2, 0, f"{indent}{mark} {row.label}", attr)
+        _draw(i + 2, 0, f"{indent}{mark} {row.label}", attr)
     if state.message:
-        stdscr.addstr(len(rows) + 3, 0, state.message)
+        _draw(len(rows) + 3, 0, state.message)
     stdscr.refresh()
 
 

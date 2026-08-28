@@ -135,14 +135,18 @@ def test_delete_selected_row_on_provider_sets_message():
 
 
 class _FakeStdscr:
-    def __init__(self):
+    def __init__(self, maxyx=(1000, 1000)):
         self.lines: list[tuple] = []
+        self._maxyx = maxyx
 
     def erase(self):
         self.lines.clear()
 
-    def addstr(self, *args, **kwargs):
+    def addstr(self, *args):
         self.lines.append(args)
+
+    def getmaxyx(self):
+        return self._maxyx
 
     def refresh(self):
         pass
@@ -155,6 +159,27 @@ def test_render_draws_header_and_provider_rows_without_raising():
     assert stdscr.lines  # something was drawn
     joined = " ".join(str(elem) for line in stdscr.lines for elem in line if isinstance(elem, str))
     assert "grok" in joined
+
+
+def test_add_model_row_on_models_less_provider_sets_message_and_leaves_config_unchanged():
+    state = make_state()
+    idx = [r.provider for r in tui.visible_rows(state)].index("opencode")
+    state.cursor = idx
+    before = dict(state.config["providers"]["opencode"])
+    tui.add_model_row(state, "some-model")
+    assert state.message
+    assert state.config["providers"]["opencode"] == before
+    assert "models" not in state.config["providers"]["opencode"]
+
+
+def test_render_does_not_raise_on_short_terminal():
+    state = make_state()
+    state.message = "a fairly long warning message that might overflow a narrow terminal"
+    stdscr = _FakeStdscr(maxyx=(3, 20))
+    tui.render(stdscr, state)  # must not raise
+    for args in stdscr.lines:
+        y = args[0]
+        assert y < 3
 
 
 def test_main_is_defined_and_callable():

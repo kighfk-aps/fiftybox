@@ -155,7 +155,11 @@ provider에 따라 조건부다.
 실행에서 존재하지 않는 것으로 취급한다 — 로그인·구독 확인조차 하지 않는다.
 파일이 없으면 아직 `/fiftybox-config`를 한 번도 실행하지 않았다는 뜻이니, 리포
 기본값(`lane_priority: ["codex-write", "pi", "grok", "commandcode"]`, 모두
-`enabled: true`)을 그대로 쓴다.
+`enabled: true`)을 그대로 쓴다. 파일은 있는데 JSON으로 파싱되지 않으면 설정이
+깨진 것으로 보인다고 사용자에게 알리고, `/fiftybox-config`의 TUI를 다음에
+실행하면 해당 파일을 `.bak`으로 백업한 뒤 기본값으로 재생성한다는 점을
+안내한 다음, 이번 실행은 파이프라인 전체를 중단하지 말고 리포 기본값으로
+계속 진행한다.
 
 기본 lane mode에서는 설정에서 `enabled`인 lane만 확인한다. 명시 override에서는
 선택한 lane만 확인한다. CommandCode lane 확인은 `cmd` 설치·인증·모델 가용성
