@@ -32,6 +32,10 @@ has "$SKILL" "유료 모델로 임의 전환하지 않는다" "SKILL.md refuses 
 has "$SKILL" "오케스트레이터는 구현 파일을 직접 쓰거나 고치지 않는다" \
     "SKILL.md carries the no-direct-write prohibition"
 
+has "$SKILL" "fiftybox-config.json" "SKILL.md reads the fiftybox-config.json settings file"
+has "$SKILL" "providers.opencode.enabled" "SKILL.md gates opencode discovery on config"
+has "$SKILL" "providers.pi.backends.modal-qwen38" "SKILL.md gates modal-qwen38 inclusion on config"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1
