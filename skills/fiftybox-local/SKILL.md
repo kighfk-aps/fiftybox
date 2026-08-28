@@ -43,7 +43,21 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 
 ## 후보 풀 구성
 
-1. `discover_free_models.py`로 opencode Zen 무료 티어를 실측 탐색한다
+**시작 전에 `~/.claude/fiftybox-config.json`을 읽는다** (`/fiftybox-config`
+스킬이 관리한다). 이 설정으로 아래 두 후보 원천을 켜고 끈다:
+
+- `providers.opencode.enabled`가 `false`면 1번(무료 티어 탐색) 자체를 생략한다.
+- `providers.pi.backends.modal-qwen38`의 `models`에 켜진 모델이 하나도 없으면
+  2번(Modal 항상 포함)을 생략한다 — 예를 들어 지출을 잠깐 막고 싶을 때 끌 수
+  있다. `providers.pi.enabled`(Pi CLI 전체 스위치)는 이 판단에 영향을 주지
+  않는다 — Modal은 Pi CLI 구독과 무관한 별도의 pay-per-use 배포이기
+  때문이다.
+
+설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
+기본값(둘 다 켜짐)을 그대로 쓴다.
+
+1. (`providers.opencode.enabled`가 `true`일 때만) `discover_free_models.py`로
+   opencode Zen 무료 티어를 실측 탐색한다
    (각 후보에 실제 호출 1회 — 수십 초 걸릴 수 있다). `smoke: ok`인 것만
    후보로 삼는다.
 
@@ -51,7 +65,8 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
 ```
 
-2. **`modal-qwen38`(Qwen3.8-27B)을 탐색 없이 항상 후보 1개로 추가한다** —
+2. (`providers.pi.backends.modal-qwen38`가 config에서 켜져 있을 때만)
+   **`modal-qwen38`(Qwen3.8-27B)을 탐색 없이 항상 후보 1개로 추가한다** —
    `IMPL_PROVIDER=modal-qwen38`, `IMPL_MODEL=qwen3.8-27b-q4_k_m`,
    `IMPL_AGENT=piqwen`, `IMPL_TIMEOUT=1800`. 콜드스타트는 있지만 가용성
    자체는 항상 참으로 간주한다(Modal은 pay-per-use라 "무료 티어 소진"
@@ -61,8 +76,9 @@ python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
    > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
    > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
 
-4. `smoke: ok` 후보(opencode 무료 + modal-qwen38 항상 포함)가 하나도 없으면
-   중단하고 보고한다. **유료 모델로 임의 전환하지 않는다.**
+4. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38)가 하나도
+   없으면 중단하고 보고한다. **유료 모델로 임의 전환하지 않는다.** config에서
+   둘 다 껐다면 `/fiftybox-config`로 최소 하나는 켜야 한다고 안내한다.
 
 수동 모드(`--provider`/`--model` 직접 지정)에서는 이 탐색 전체를 건너뛰고
 지정된 provider/model 쌍들을 그대로 후보로 쓴다.

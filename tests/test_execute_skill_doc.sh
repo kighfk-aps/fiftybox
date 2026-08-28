@@ -47,6 +47,12 @@ lacks "$SKILL" "skills/orchestrate/scripts" "SKILL.md avoids the non-existent or
 lacks "$SKILL" "errorClass" "SKILL.md omits the unimplemented errorClass table"
 lacks "$SKILL" "--commit-message" "SKILL.md does not document the nonexistent --commit-message flag"
 
+# --- fiftybox-config integration -------------------------------------------
+has "$SKILL" "fiftybox-config.json" "SKILL.md reads the fiftybox-config.json settings file"
+has "$SKILL" "resolve_lane" "SKILL.md computes lane assignment via resolve_lane"
+has "$SKILL" "lane_priority" "SKILL.md documents lane_priority fallthrough"
+has "$SKILL" "/fiftybox-config" "SKILL.md points users to /fiftybox-config when no provider is enabled"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

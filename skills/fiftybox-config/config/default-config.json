@@ -1,0 +1,40 @@
+{
+  "lane_priority": ["codex-write", "pi", "grok", "commandcode"],
+  "providers": {
+    "codex-write": {
+      "enabled": true,
+      "models": {
+        "gpt-5.6-luna": true,
+        "gpt-5.6-terra": false
+      }
+    },
+    "pi": {
+      "enabled": true,
+      "backends": {
+        "zai-coding": {
+          "models": { "glm-5.3-flash": true }
+        },
+        "opencode-go": {
+          "models": { "deepseek-v4-flash": true }
+        },
+        "modal-qwen38": {
+          "models": { "qwen3.8-27b-q4_k_m": true }
+        }
+      }
+    },
+    "grok": {
+      "enabled": true,
+      "models": { "grok-4.6": true }
+    },
+    "commandcode": {
+      "enabled": true,
+      "models": {
+        "qwen/qwen3.7-flash": true,
+        "zai-org/glm-5.2": true
+      }
+    },
+    "opencode": {
+      "enabled": true
+    }
+  }
+}

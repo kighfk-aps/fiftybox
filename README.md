@@ -68,7 +68,7 @@ cd fiftybox && ./install.sh
 
 ### Commands
 
-fiftybox ships five slash commands. Each one is the installed skill
+fiftybox ships six slash commands. Each one is the installed skill
 (`/skill-name`); there are no separate `~/.claude/commands/` wrappers, because
 those duplicated every fiftybox entry in Claude Code's skill list.
 
@@ -79,6 +79,7 @@ those duplicated every fiftybox entry in Claude Code's skill list.
 | `/fiftybox-execute` | Parallel-batch TDD execution; `--provider` selects opencode-go / commandcode / pi / grok |
 | `/fiftybox-local` | Dynamic-parallel TDD on local/free providers (opencode free-tier, Modal Qwen3.8-27B) |
 | `/fiftybox-gpt-review` | Reviews a design or plan document with Codex GPT models |
+| `/fiftybox-config` | Interactive checkbox TUI to toggle which CLI providers/models are currently usable — run by the human, not Claude |
 
 ### Flags
 

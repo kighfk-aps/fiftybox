@@ -23,6 +23,8 @@ GPT_REVIEW_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-gpt-review"
 CODEX_SKILLS_DIR="$INSTALL_ROOT/.codex/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
+CONFIG_SKILL_DIR="$INSTALL_ROOT/.claude/skills/fiftybox-config"
+USER_CONFIG_FILE="$INSTALL_ROOT/.claude/fiftybox-config.json"
 COMMANDS_DIR="$INSTALL_ROOT/.claude/commands"
 
 # Run install.sh
@@ -149,6 +151,40 @@ fi
 [[ ! -e "$COMMANDS_DIR/fiftybox-local-execute.md" ]] \
     && pass "fiftybox-local-execute.md command wrapper not installed" \
     || fail "fiftybox-local-execute.md command wrapper still installed"
+
+[[ -f "$CONFIG_SKILL_DIR/SKILL.md" ]] \
+    && pass "fiftybox-config skill installed" \
+    || fail "fiftybox-config skill not installed"
+
+[[ -f "$CONFIG_SKILL_DIR/scripts/config_lib.py" ]] \
+    && pass "fiftybox-config config_lib.py installed" \
+    || fail "fiftybox-config config_lib.py missing"
+
+[[ -f "$CONFIG_SKILL_DIR/scripts/config_tui.py" ]] \
+    && pass "fiftybox-config config_tui.py installed" \
+    || fail "fiftybox-config config_tui.py missing"
+
+[[ -f "$CONFIG_SKILL_DIR/config/default-config.json" ]] \
+    && pass "fiftybox-config default-config.json installed" \
+    || fail "fiftybox-config default-config.json missing"
+
+[[ -f "$USER_CONFIG_FILE" ]] \
+    && pass "global fiftybox-config.json seeded" \
+    || fail "global fiftybox-config.json not seeded"
+
+# Reinstall must not clobber a user's existing provider/model choices
+python3 -c "
+import json
+path = '$USER_CONFIG_FILE'
+cfg = json.load(open(path))
+cfg['providers']['grok']['enabled'] = False
+json.dump(cfg, open(path, 'w'))
+"
+bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
+grok_enabled=$(python3 -c "import json; print(json.load(open('$USER_CONFIG_FILE'))['providers']['grok']['enabled'])")
+[[ "$grok_enabled" == "False" ]] \
+    && pass "reinstall does not clobber existing fiftybox-config.json" \
+    || fail "reinstall overwrote existing fiftybox-config.json (grok enabled=$grok_enabled)"
 
 # ---------------------------------------------------------------------------
 # configure.sh: sets agents

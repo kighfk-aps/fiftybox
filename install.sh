@@ -10,6 +10,7 @@ LOCAL_EXECUTE_SKILL_DIR="$HOME/.claude/skills/fiftybox-local-execute"
 CODEX_SKILLS_DIR="${CODEX_HOME:-$HOME/.codex}/skills"
 CODEX_LOCAL_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local"
 CODEX_LOCAL_EXECUTE_SKILL_DIR="$CODEX_SKILLS_DIR/fiftybox-local-execute"
+CONFIG_SKILL_DIR="$HOME/.claude/skills/fiftybox-config"
 COMMANDS_DIR="$HOME/.claude/commands"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -107,13 +108,30 @@ cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$CODEX_L
 cp "$SCRIPT_DIR/skills/fiftybox-local/agents/openai.yaml" "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml"
 log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
 
+# Install fiftybox-config (provider/model availability toggle TUI)
+mkdir -p "$CONFIG_SKILL_DIR/scripts" "$CONFIG_SKILL_DIR/config"
+cp "$SCRIPT_DIR/skills/fiftybox-config/SKILL.md" "$CONFIG_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-config/scripts/"*.py "$CONFIG_SKILL_DIR/scripts/"
+cp "$SCRIPT_DIR/skills/fiftybox-config/config/default-config.json" "$CONFIG_SKILL_DIR/config/default-config.json"
+log "Installed Claude skill fiftybox-config → $CONFIG_SKILL_DIR"
+
+# Seed the global provider/model settings file only if the user doesn't
+# already have one — reinstalling must never clobber their choices.
+USER_CONFIG_FILE="$HOME/.claude/fiftybox-config.json"
+if [[ ! -f "$USER_CONFIG_FILE" ]]; then
+  cp "$SCRIPT_DIR/skills/fiftybox-config/config/default-config.json" "$USER_CONFIG_FILE"
+  log "Seeded default provider/model settings → $USER_CONFIG_FILE"
+else
+  log "Existing provider/model settings kept → $USER_CONFIG_FILE"
+fi
+
 # Claude Code already exposes each installed skill as /skill-name. Matching
 # ~/.claude/commands/*.md wrappers made every fiftybox skill appear twice in
 # the skill / slash-command list. Do not install wrappers; remove leftovers.
 mkdir -p "$COMMANDS_DIR"
 for cmd in fiftybox-orchestration fiftybox-plans fiftybox-execute \
            fiftybox-local fiftybox-gpt-review fiftybox-local-execute \
-           fiftybox-cc-execute fiftybox-free-execute; do
+           fiftybox-cc-execute fiftybox-free-execute fiftybox-config; do
   wrapper="$COMMANDS_DIR/$cmd.md"
   if [[ -f "$wrapper" ]]; then
     rm -f "$wrapper"
