@@ -132,3 +132,30 @@ def test_delete_selected_row_on_provider_sets_message():
     tui.delete_selected_row(state)
     assert state.message
     assert "grok" in state.config["providers"]  # nothing was deleted
+
+
+class _FakeStdscr:
+    def __init__(self):
+        self.lines: list[tuple] = []
+
+    def erase(self):
+        self.lines.clear()
+
+    def addstr(self, *args, **kwargs):
+        self.lines.append(args)
+
+    def refresh(self):
+        pass
+
+
+def test_render_draws_header_and_provider_rows_without_raising():
+    state = make_state()
+    stdscr = _FakeStdscr()
+    tui.render(stdscr, state)
+    assert stdscr.lines  # something was drawn
+    joined = " ".join(str(line[-1]) for line in stdscr.lines if isinstance(line[-1], str))
+    assert "grok" in joined
+
+
+def test_main_is_defined_and_callable():
+    assert callable(tui.main)

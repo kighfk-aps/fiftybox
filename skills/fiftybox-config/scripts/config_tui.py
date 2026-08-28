@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import config_lib as cl
+import curses  # noqa: E402  (kept below dataclass imports intentionally)
 
 
 @dataclass
@@ -125,3 +126,70 @@ def delete_selected_row(state: State) -> State:
     state.cursor = max(0, state.cursor - 1)
     state.message = f"Removed {row.model}"
     return state
+
+
+def render(stdscr, state: State) -> None:
+    stdscr.erase()
+    rows = visible_rows(state)
+    stdscr.addstr(
+        0, 0,
+        "fiftybox-config  (space=toggle  enter=expand  a=add  d=delete  s=save  q=quit)",
+    )
+    for i, row in enumerate(rows):
+        mark = "[x]" if row.checked else "[ ]"
+        indent = "  " * row.depth
+        attr = curses.A_REVERSE if i == state.cursor else curses.A_NORMAL
+        stdscr.addstr(i + 2, 0, f"{indent}{mark} {row.label}", attr=attr)
+    if state.message:
+        stdscr.addstr(len(rows) + 3, 0, state.message)
+    stdscr.refresh()
+
+
+def _prompt(stdscr, label: str) -> str:
+    curses.echo()
+    y = curses.LINES - 1
+    stdscr.addstr(y, 0, label)
+    stdscr.clrtoeol()
+    text = stdscr.getstr(y, len(label)).decode("utf-8")
+    curses.noecho()
+    return text
+
+
+def _run(stdscr, config_path) -> None:
+    curses.curs_set(0)
+    config, warning = cl.load_config(config_path)
+    state = State(config=config)
+    if warning:
+        state.message = warning
+    key_for_ch = {
+        curses.KEY_DOWN: "down", ord("j"): "down",
+        curses.KEY_UP: "up", ord("k"): "up",
+        ord(" "): " ",
+        curses.KEY_ENTER: "\n", 10: "\n", 13: "\n",
+        ord("s"): "s",
+        ord("q"): "q",
+    }
+    while True:
+        render(stdscr, state)
+        ch = stdscr.getch()
+        if ch == ord("a"):
+            name = _prompt(stdscr, "New model name: ")
+            if name:
+                state = add_model_row(state, name)
+        elif ch == ord("d"):
+            state = delete_selected_row(state)
+        elif ch in key_for_ch:
+            state = handle_key(state, key_for_ch[ch])
+        if state.should_save:
+            cl.save_config(state.config, config_path)
+            return
+        if state.should_quit:
+            return
+
+
+def main() -> None:
+    curses.wrapper(_run, cl.DEFAULT_CONFIG_PATH)
+
+
+if __name__ == "__main__":
+    main()
