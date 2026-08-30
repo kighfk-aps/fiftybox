@@ -1,6 +1,6 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
@@ -44,7 +44,7 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 ## 후보 풀 구성
 
 **시작 전에 `~/.claude/fiftybox-config.json`을 읽는다** (`/fiftybox-config`
-스킬이 관리한다). 이 설정으로 아래 두 후보 원천을 켜고 끈다:
+스킬이 관리한다). 이 설정으로 아래 세 후보 원천을 켜고 끈다:
 
 - `providers.opencode.enabled`가 `false`면 1번(무료 티어 탐색) 자체를 생략한다.
 - `providers.pi.backends.modal-qwen38`의 `models`에 켜진 모델이 하나도 없으면
@@ -52,9 +52,11 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
   있다. `providers.pi.enabled`(Pi CLI 전체 스위치)는 이 판단에 영향을 주지
   않는다 — Modal은 Pi CLI 구독과 무관한 별도의 pay-per-use 배포이기
   때문이다.
+- `providers.pi.backends.nvidia-nim`의 `models`에 켜진 모델이 하나도 없으면
+  3번(NIM 항상 포함)을 생략한다.
 
 설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
-기본값(둘 다 켜짐)을 그대로 쓴다.
+기본값(셋 다 켜짐)을 그대로 쓴다.
 
 1. (`providers.opencode.enabled`가 `true`일 때만) `discover_free_models.py`로
    opencode Zen 무료 티어를 실측 탐색한다
@@ -71,14 +73,21 @@ python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
    `IMPL_AGENT=piqwen`, `IMPL_TIMEOUT=1800`. 콜드스타트는 있지만 가용성
    자체는 항상 참으로 간주한다(Modal은 pay-per-use라 "무료 티어 소진"
    개념이 없다).
-3. `metadata_degraded`가 `true`면 사용자에게 먼저 알린다:
+3. (`providers.pi.backends.nvidia-nim`가 config에서 켜져 있을 때만)
+   **NIM을 탐색 없이 항상 후보 1개로 추가한다** — `IMPL_PROVIDER=nvidia-nim`,
+   `IMPL_MODEL=<config의 `nvidia-nim.models`에서 켜진 첫 모델, JSON 키 순서
+   기준>`, `IMPL_AGENT=pi`, `IMPL_TIMEOUT=600`. 이 후보 1개는 내부적으로
+   [NIM 폴백 순서](#nim-폴백-순서)를 따라 순차 재시도한다 — 자세한 내용은
+   해당 섹션 참고.
+4. `metadata_degraded`가 `true`면 사용자에게 먼저 알린다:
 
    > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
    > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
 
-4. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38)가 하나도
-   없으면 중단하고 보고한다. **유료 모델로 임의 전환하지 않는다.** config에서
-   둘 다 껐다면 `/fiftybox-config`로 최소 하나는 켜야 한다고 안내한다.
+5. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38 + nvidia-nim)가
+   하나도 없으면 중단하고 보고한다. **유료 모델로 임의 전환하지 않는다.**
+   config에서 셋 다 껐다면 `/fiftybox-config`로 최소 하나는 켜야 한다고
+   안내한다.
 
 수동 모드(`--provider`/`--model` 직접 지정)에서는 이 탐색 전체를 건너뛰고
 지정된 provider/model 쌍들을 그대로 후보로 쓴다.
@@ -128,6 +137,44 @@ done
 --implementation-timeout 1800`을 추가한다. `--phase setup`에도
 `--implement-agent piqwen`을 넘겨 미지의 에이전트 이름을 setup 단계에서
 먼저 걸러낸다.
+
+---
+
+## NIM 폴백 순서
+
+`nvidia-nim` 후보 하나에는 실제로 모델 여러 개가 묶여 있다. NIM 무료
+엔드포인트는 분당 요청 제한(약 40 RPM)이 있고 모델이 예고 없이 배포 중단·
+교체될 수 있으므로, 그 lane이 막히면 **다른 provider로 넘어가기 전에** 이
+목록을 순서대로 재시도한다. 순서는 `providers.pi.backends.nvidia-nim.models`의
+JSON 키 순서(=`/fiftybox-config` TUI에서 조정 가능)를 그대로 따른다 —
+리포 기본값은:
+
+1. `openai/gpt-oss-120b` — executor 실측 테스트에서 속도·정답률 1순위
+2. `moonshotai/kimi-k3`
+3. `poolside/laguna-xs-2.1`
+4. `minimaxai/minimax-m3`
+
+**트리거 조건** (Step 5/9의 implement/deploy 디스패치 응답 기준):
+- HTTP 429, 또는 응답 본문에 rate limit 관련 문구
+- 모델이 더 이상 존재하지 않는다는 4xx 에러(배포 중단·교체)
+- 60초 이상 응답이 없어 타임아웃
+
+**절차:**
+1. 실패한 태스크를 목록의 **다음 모델**로 즉시 재디스패치한다
+   (`IMPL_PROVIDER=nvidia-nim`, `IMPL_MODEL=<다음 모델>`는 그대로, 나머지
+   인자는 동일). 이 재시도는 [안전 계약](#안전-계약)의 "자동 재시도는
+   태스크당 1회만"과 별개다 — NIM 리스트 소진 전까지는 provider 내부
+   전환이지 재시도가 아니다.
+2. 목록의 모든 모델을 다 써도 계속 막히면, 그때 비로소 NIM lane 전체를
+   "소진"으로 처리하고 [모델 소진 처리](#모델-소진-처리) 절차(다른 후보로
+   재배정, 형제 레인 계속 진행)로 넘어간다.
+3. 어느 단계에서 전환했든 `<artifactDir>/model-choice.json`의 `history`에
+   `{"from": "nvidia-nim/<이전 모델>", "to": "nvidia-nim/<다음 모델>" 또는
+   "<다른 provider>", "reason": "rate_limited" | "model_unavailable" |
+   "timeout"}`을 append한다.
+
+형제 레인(opencode 후보, modal-qwen38)은 이 재시도 동안 영향받지 않고 계속
+진행한다.
 
 ---
 

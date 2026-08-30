@@ -19,6 +19,14 @@
         },
         "modal-qwen38": {
           "models": { "qwen3.8-27b-q4_k_m": true }
+        },
+        "nvidia-nim": {
+          "models": {
+            "openai/gpt-oss-120b": true,
+            "moonshotai/kimi-k3": true,
+            "poolside/laguna-xs-2.1": true,
+            "minimaxai/minimax-m3": true
+          }
         }
       }
     },

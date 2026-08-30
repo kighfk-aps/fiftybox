@@ -43,7 +43,13 @@ description: fiftybox-execute/fiftybox-local이 쓰는 CLI provider(Pi, Codex, C
     "pi": {"enabled": true, "backends": {
       "zai-coding": {"models": {"glm-5.3-flash": true}},
       "opencode-go": {"models": {"deepseek-v4-flash": true}},
-      "modal-qwen38": {"models": {"qwen3.8-27b-q4_k_m": true}}
+      "modal-qwen38": {"models": {"qwen3.8-27b-q4_k_m": true}},
+      "nvidia-nim": {"models": {
+        "openai/gpt-oss-120b": true,
+        "moonshotai/kimi-k3": true,
+        "poolside/laguna-xs-2.1": true,
+        "minimaxai/minimax-m3": true
+      }}
     }},
     "grok": {"enabled": true, "models": {"grok-4.6": true}},
     "commandcode": {"enabled": true, "models": {"qwen/qwen3.7-flash": true, "zai-org/glm-5.2": true}},
