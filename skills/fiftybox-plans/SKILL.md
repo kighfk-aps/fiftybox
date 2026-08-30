@@ -166,7 +166,7 @@ Run the existing orchestration design-plan phase:
 
 ```bash
 python3 <orchestrate.py> --phase design-plan --task "<task>" --cwd "$(pwd)" \
-  --artifact-dir "<artifactDir>" --claude-model claude-opus-4-6
+  --artifact-dir "<artifactDir>"
 ```
 
 This must produce at least:
