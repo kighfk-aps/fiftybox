@@ -27,6 +27,9 @@
             "poolside/laguna-xs-2.1": true,
             "minimaxai/minimax-m3": true
           }
+        },
+        "turbofieldfare": {
+          "models": { "gemma-4-26b-a4b-it": true }
         }
       }
     },

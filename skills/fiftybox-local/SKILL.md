@@ -1,6 +1,6 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI, local on-device Gemma 4 26B-A4B via TurboFieldfare as last-resort fallback) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
@@ -54,22 +54,25 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
   때문이다.
 - `providers.pi.backends.nvidia-nim`의 `models`에 켜진 모델이 하나도 없으면
   3번(NIM 항상 포함)을 생략한다.
+- `providers.pi.backends.turbofieldfare`의 `models`에 켜진 모델이 하나도 없으면
+  4번(로컬 Gemma 4 최후 폴백)을 생략한다.
 
 설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
-기본값(셋 다 켜짐)을 그대로 쓴다.
+기본값(넷 다 켜짐)을 그대로 쓴다.
 
 **각 후보는 (agent, provider, model) 3튜플이다.** `orchestrate.py`의
 `--implement-agent`는 에이전트 레지스트리 키(`opencode`/`pi`/`piqwen` 등)만
 받는다 — provider 이름(`nvidia-nim`, `modal-qwen38`)을 그 자리에 넣으면 setup이
 "is not in the agents list"로 하드 실패한다. `--provider`는 별개 플래그이고
 기본값이 `opencode-go`라서, 빠뜨리면 의도한 백엔드가 아니라 조용히
-`opencode-go`로 나간다. 세 후보 원천은 다음과 같이 고정된다:
+`opencode-go`로 나간다. 네 후보 원천은 다음과 같이 고정된다:
 
 | 후보 원천 | `IMPL_AGENT`(`--implement-agent`) | `IMPL_PROVIDER`(`--provider`) | `IMPL_MODEL`(`--model`) |
 |---|---|---|---|
 | opencode 무료 티어 | `opencode` | (전달해도 무시됨 — 템플릿이 `{provider}`를 안 씀) | 탐색된 `opencode/<모델>` |
 | Modal Qwen | `piqwen` | `modal-qwen38` | `qwen3.8-27b-q4_k_m` |
 | NVIDIA NIM | `pi` | `nvidia-nim` | config의 `nvidia-nim.models`에서 켜진 모델 |
+| 로컬 Gemma 4 (최후 폴백) | `pi` | `turbofieldfare` | `gemma-4-26b-a4b-it` |
 
 Step 5/7/9의 모든 디스패치 명령은 이 표의 세 값을 **전부** 넘겨야 한다. 하나만
 빠져도 오작동(잘못된 백엔드) 또는 하드 실패(잘못된 에이전트 이름) 중 하나로
@@ -103,10 +106,23 @@ python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
    > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
    > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
 
-5. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38 + nvidia-nim)가
-   하나도 없으면 중단하고 보고한다. **유료 모델로 임의 전환하지 않는다.**
-   config에서 셋 다 껐다면 `/fiftybox-config`로 최소 하나는 켜야 한다고
-   안내한다.
+5. 1~3번 후보가 **하나도 없을 때만**, (`providers.pi.backends.turbofieldfare`가
+   config에서 켜져 있으면) 로컬 Gemma 4를 최후의 후보 1개로 추가한다 —
+   `IMPL_AGENT=pi`, `IMPL_PROVIDER=turbofieldfare`,
+   `IMPL_MODEL=gemma-4-26b-a4b-it`, `IMPL_TIMEOUT=86400`. 다른 후보가 하나라도
+   있으면 이 후보는 절대 배치에 섞이지 않는다 — 매우 느리고 서버 특성상
+   병렬도 1로만 돈다. 자세한 절차는
+   [로컬 Gemma 4 최후 폴백](#로컬-gemma-4-최후-폴백) 참고. 디스패치 전
+   반드시 사용자에게 알린다:
+
+   > 다른 후보가 모두 막혔습니다. 로컬 Gemma 4로 진행할까요? 태스크 1개에
+   > 수 시간이 걸리고, 그동안 이 맥이 계속 바쁘며 다른 fiftybox 실행이
+   > 막힙니다.
+
+6. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38 + nvidia-nim +
+   turbofieldfare)가 하나도 없으면 중단하고 보고한다. **유료 모델로 임의
+   전환하지 않는다.** config에서 넷 다 껐다면 `/fiftybox-config`로 최소
+   하나는 켜야 한다고 안내한다.
 
 수동 모드(`--provider`/`--model` 직접 지정)에서는 이 탐색 전체를 건너뛰고
 지정된 provider/model 쌍들을 그대로 후보로 쓴다.
@@ -240,6 +256,88 @@ opencode 레인 전체를 소진 처리한다.
 
 ---
 
+## 로컬 Gemma 4 최후 폴백
+
+`turbofieldfare`(로컬 Gemma 4 26B-A4B IT)는 1~3번 후보가 **하나도 남지
+않았을 때만** 쓰는 최후의 후보다. 다른 후보와 절대 같은 배치에 섞이지
+않는다 — 이 레인이 선택되면 그 라운드는 항상 배치 크기 1, 순차 실행이다
+(서버가 프로세스 1개·모델 1개라 병렬이 불가능하다).
+
+**속도에 대한 솔직한 기대치.** 실측(`server.log`)으로 6,195토큰 프롬프트를
+읽는 데만 213초 걸렸다. 구현 태스크 1개에 수 시간을 각오해야 한다. 그동안
+이 맥은 계속 바쁘고, worktree·브랜치·`orchestrate` 락이 잡혀 있어 다른
+fiftybox 실행이 막힌다. 품질도 무료 원격 모델보다 낮을 수 있다(활성
+파라미터 ~3.9B, 4-bit) — [리뷰 게이트](#step-6-오케스트레이터-리뷰-게이트)를
+절대 생략하지 않는다.
+
+**`--auto-resume`을 절대 붙이지 않는다.** watcher 데몬의 TTL이 6시간이라
+(`orchestrate_watcher.py` 기본값), 24시간짜리 이 레인을 중간에 죽인다.
+
+### 서버 preflight (디스패치 전 매번)
+
+1. **이미 떠 있나 확인:**
+   ```bash
+   curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health
+   ```
+   `200`이면 바로 디스패치로 넘어간다.
+
+2. **아니면 충돌 프로세스부터 확인:**
+   ```bash
+   pgrep -fl 'TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI'
+   ```
+   이미 다른 프로세스가 모델을 물고 있으면 새로 띄우지 않는다.
+
+3. **detached로 기동한다** (모델 로드가 포트 오픈보다 먼저 끝난다 — 늦게 열림은
+   정상이다). `--max-context 65536`은 **반드시** 명시한다(서버 기본값은
+   16384다):
+   ```bash
+   nohup bash -c '
+   cd /Users/tanpapa/Desktop/develop-a/local-model/turbo-fieldfare
+   .build/release/TurboFieldfareServer \
+     --model scratch/gemma4.gturbo --port 8080 --max-context 65536
+   ' > "<artifactDir>/turbofieldfare-server.log" 2>&1 &
+   ```
+   이 스킬이 새로 띄웠는지 기록해 둔다(원래 떠 있던 서버였으면 Step 10에서
+   건드리지 않는다).
+
+4. **폴링**: 30초 간격으로 `/health`를 최대 16회(8분) 확인한다.
+   ```bash
+   for i in $(seq 1 16); do
+     sleep 30
+     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health || true)"
+     echo "boot-check $((i*30))s: ${code:-<empty>}"
+     if [ "$code" = "200" ]; then echo READY; break; fi
+   done
+   ```
+   8분 안에 `200`이 안 나오면 디스패치하지 않고 `unknown`으로 분류해 보고한다.
+   모델 스왑을 제안하지 않는다(provider가 하나뿐이다).
+
+### 디스패치
+
+`--implement-agent pi --provider turbofieldfare --model gemma-4-26b-a4b-it
+--implementation-timeout 86400`을 **셋 다 + 타임아웃까지** 붙인다.
+`--provider`를 빠뜨리면 기본값 `opencode-go`로 조용히 나간다.
+
+### 폴링 간격 예외
+
+다른 레인은 30~60초 간격으로 `.out`을 확인하지만, 이 레인은 최대 24시간
+걸리므로 **10분 간격**으로 확인한다. 살아있는지 보려면
+`turbofieldfare-server.log`의 `generating`/`completed` 줄이 계속 갱신되는지
+같이 본다.
+
+### 실패 시
+
+- `EXIT_CODE=124`(24시간 초과)는 재시도하지 않는다 — 다시 돌려도 또 24시간
+  걸린다. 사용자에게 보고하고 선택지를 묻는다.
+- 그 외 실패도 [Step 7의 1회 자동 재시도](#step-7-review--test-phase-6)를
+  적용하지 **않는다** — 사용자에게 먼저 묻는다. 후보가 이거 하나뿐이라
+  재시도해도 결과가 크게 다르지 않을 가능성이 높다.
+- 서버 preflight가 8분 안에 실패하면 `unknown`으로 분류하고, 이 레인도
+  막혔다는 뜻이므로 [후보 풀 구성](#후보-풀-구성) 6번 규칙대로 전체 중단
+  보고로 넘어간다.
+
+---
+
 ## 실패 처리
 
 `orchestrate.py`는 구현 경로에 실패 분류 필드를 만들지 않는다.
@@ -297,7 +395,9 @@ Modal·opencode는 그대로 돈다. 모든 레인이 막혔을 때만 전체를
 
 **태스크 국소(`timeout`·`no_changes`·`unknown`) — 모델을 바꾸지 않는다.**
 - `timeout` — Modal이면 웨이크업을 다시 확인, 아니면
-  `--implementation-timeout` 상향 후 1회 재시도
+  `--implementation-timeout` 상향 후 1회 재시도. **단 turbofieldfare(로컬
+  Gemma 4) 레인은 예외다** — 24시간을 이미 다 쓴 것이므로 재시도하지 않고
+  사용자에게 보고한다([로컬 Gemma 4 최후 폴백](#로컬-gemma-4-최후-폴백) 참고)
 - `no_changes` — 모델이 지시를 무시했거나 프롬프트가 부실하다는 신호. 같은
   3축으로 재시도하고, 반복되면 모델 단위로 취급해 다음 모델로 넘긴다
 - `unknown` — 로그 원문과 함께 사용자에게 보고한다. 임의로 모델을 바꾸지 않는다
@@ -418,7 +518,8 @@ orchestrate.py가 각 호출을 순차 다중 태스크 모드로 처리해서, 
 
 라운드 내 각 태스크를 배정된 (agent, provider, model) 3튜플로 동시에
 디스패치한다. `modal-qwen38`이 배정된 레인은 디스패치 전 웨이크업 절차를
-거친다.
+거친다. `turbofieldfare`(로컬 Gemma 4)가 배정된 라운드는 배치 크기가 항상
+1이고, 디스패치 전 [서버 preflight](#로컬-gemma-4-최후-폴백)를 거친다.
 
 **foreground 실행 금지.** `--phase implement`를 foreground로 돌리면 Bash 도구의
 10분 한도를 넘겨 파일도 로그도 없이 통째로 죽는다. 반드시 detached로 돌린다.
@@ -444,10 +545,13 @@ echo "EXIT_CODE=$?"
 ```
 
 `modal-qwen38` 레인에는 `--implement-agent piqwen --provider modal-qwen38
---implementation-timeout 1800`을 붙인다.
+--implementation-timeout 1800`을 붙인다. `turbofieldfare` 레인에는
+`--implement-agent pi --provider turbofieldfare --implementation-timeout
+86400`을 붙인다.
 
 라운드 내 모든 `.out` 파일에 `EXIT_CODE=`가 찍힐 때까지 30~60초 간격으로
-폴링한다:
+폴링한다(단 `turbofieldfare` 레인만 있는 라운드는 최대 24시간 걸리므로
+[10분 간격으로 폴링한다](#로컬-gemma-4-최후-폴백)):
 
 ```bash
 for f in "<artifactDir>"/implement-task-*.out; do
@@ -523,7 +627,9 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```
 
 `modal-qwen38`이면 웨이크업 후 `--implement-agent piqwen --provider
-modal-qwen38 --implementation-timeout 1800`.
+modal-qwen38 --implementation-timeout 1800`. `turbofieldfare`면
+[서버 preflight](#로컬-gemma-4-최후-폴백) 후 `--implement-agent pi --provider
+turbofieldfare --implementation-timeout 86400`.
 
 ### Step 10: Cleanup (Phase 8)
 
@@ -533,7 +639,9 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --artifact-dir "<artifactDir>"
 ```
 
-`summary.json`의 최종 상태를 보고한다.
+`summary.json`의 최종 상태를 보고한다. **이번 실행이 TurboFieldfare 서버를
+새로 띄웠다면**(preflight에서 기존 프로세스가 없어서 이 스킬이 직접 기동한
+경우) 종료할지 사용자에게 묻는다. 원래부터 떠 있던 서버는 건드리지 않는다.
 
 ---
 
@@ -588,7 +696,13 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 - provider는 테스트 파일을 수정하지 않는다. 수정했으면 되돌리고 재실행한다
 - `--dangerously-skip-permissions`는 orchestrate가 만든 격리된 워크트리 안에서만
   유효하다
-- 무료 후보가 모두 막히면 중단한다. 유료 모델로 넘어가지 않는다
+- 무료 원격 후보(opencode/Modal/NIM)가 모두 막히면 로컬 Gemma 4
+  (`turbofieldfare`, 켜져 있을 때)로 최후 시도한다. 그마저 없거나 막히면
+  중단한다. 유료 모델로 넘어가지 않는다
+- `turbofieldfare` 레인에는 `--auto-resume`을 절대 붙이지 않는다(watcher
+  TTL 6시간 < 레인 타임아웃 24시간)
+- `turbofieldfare` 레인의 실패는 자동 재시도하지 않는다(위 "자동 재시도는
+  태스크당 1회만"의 예외) — 사용자에게 먼저 묻는다
 - 배치 크기는 후보 모델 수이고, 라운드 안 각 태스크는 서로 다른 모델에 배정한다
 - `--implement-agent`에는 에이전트 이름만, `--provider`에는 백엔드 이름만
   넣는다. 섞지 않는다 — [후보 풀 구성](#후보-풀-구성)의 3튜플 표 참고
