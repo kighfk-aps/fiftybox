@@ -118,6 +118,10 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "fiftybox-local discover_free_models.py installed" \
     || fail "fiftybox-local discover_free_models.py missing"
 
+[[ -f "$LOCAL_SKILL_DIR/scripts/discover_openrouter_free.py" ]] \
+    && pass "fiftybox-local discover_openrouter_free.py installed" \
+    || fail "fiftybox-local discover_openrouter_free.py missing"
+
 [[ -f "$CODEX_LOCAL_SKILL_DIR/SKILL.md" ]] \
     && pass "Codex fiftybox-local skill installed" \
     || fail "Codex fiftybox-local skill not installed"
@@ -125,6 +129,10 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
 [[ -f "$CODEX_LOCAL_SKILL_DIR/scripts/discover_free_models.py" ]] \
     && pass "Codex fiftybox-local discover_free_models.py installed" \
     || fail "Codex fiftybox-local discover_free_models.py missing"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/scripts/discover_openrouter_free.py" ]] \
+    && pass "Codex fiftybox-local discover_openrouter_free.py installed" \
+    || fail "Codex fiftybox-local discover_openrouter_free.py missing"
 
 [[ -f "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml" ]] \
     && pass "Codex fiftybox-local OpenAI metadata installed" \
