@@ -36,6 +36,20 @@ has "$SKILL" "fiftybox-config.json" "SKILL.md reads the fiftybox-config.json set
 has "$SKILL" "providers.opencode.enabled" "SKILL.md gates opencode discovery on config"
 has "$SKILL" "providers.pi.backends.modal-qwen38" "SKILL.md gates modal-qwen38 inclusion on config"
 
+# OpenRouter free tier (top-priority candidate source)
+DISCOVER_OR="$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_openrouter_free.py"
+[[ -f "$DISCOVER_OR" ]] && pass "discover_openrouter_free.py exists in fiftybox-local" \
+    || fail "discover_openrouter_free.py missing from fiftybox-local"
+
+has "$SKILL" "discover_openrouter_free.py" "SKILL.md runs the OpenRouter free discovery script"
+has "$SKILL" "providers.pi.backends.openrouter" "SKILL.md gates OpenRouter inclusion on config"
+has "$SKILL" "IMPL_PROVIDER=openrouter" "SKILL.md dispatches with the openrouter provider"
+has "$SKILL" "900" "SKILL.md documents the 900s OpenRouter implementation timeout"
+has "$SKILL" "upstream_provider_shared_pool" "SKILL.md classifies shared-pool 429 as model-level"
+has "$SKILL" ":free" "SKILL.md restricts OpenRouter to :free models"
+has "$SKILL" "OpenRouter 폴백 순서" "SKILL.md defines the OpenRouter fallback order section"
+has "$SKILL" "최우선" "SKILL.md marks OpenRouter as the top-priority source"
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

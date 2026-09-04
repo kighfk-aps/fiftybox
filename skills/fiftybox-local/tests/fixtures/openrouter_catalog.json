@@ -1,0 +1,49 @@
+{
+  "data": [
+    {
+      "id": "z-ai/glm-5.2:free",
+      "context_length": 256000,
+      "supported_parameters": ["tools", "temperature", "max_tokens"]
+    },
+    {
+      "id": "thinkingmachines/inkling:free",
+      "context_length": 1048576,
+      "supported_parameters": ["tools", "reasoning_effort"]
+    },
+    {
+      "id": "poolside/laguna-s-2.1:free",
+      "context_length": 262144,
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "cohere/north-mini-code:free",
+      "context_length": 256000,
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "minimax/minimax-m3:free",
+      "context_length": 1048576,
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "nvidia/nemotron-3-ultra-550b-a55b:free",
+      "context_length": 1000000,
+      "supported_parameters": ["tools", "reasoning_effort"]
+    },
+    {
+      "id": "z-ai/glm-5.2",
+      "context_length": 1048576,
+      "supported_parameters": ["tools", "temperature"]
+    },
+    {
+      "id": "nvidia/nemotron-3.5-content-safety:free",
+      "context_length": 128000,
+      "supported_parameters": ["temperature"]
+    },
+    {
+      "id": "liquid/lfm-2.5-2.6b:free",
+      "context_length": 65536,
+      "supported_parameters": ["tools"]
+    }
+  ]
+}

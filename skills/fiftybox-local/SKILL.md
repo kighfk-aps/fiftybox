@@ -1,6 +1,6 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on local or free providers (opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI, local on-device Gemma 4 26B-A4B via TurboFieldfare as last-resort fallback) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on local or free providers (OpenRouter free-tier via Pi CLI as top priority, opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI, local on-device Gemma 4 26B-A4B via TurboFieldfare as last-resort fallback) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
@@ -44,31 +44,35 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 ## 후보 풀 구성
 
 **시작 전에 `~/.claude/fiftybox-config.json`을 읽는다** (`/fiftybox-config`
-스킬이 관리한다). 이 설정으로 아래 세 후보 원천을 켜고 끈다:
+스킬이 관리한다). 이 설정으로 아래 다섯 후보 원천을 켜고 끈다:
 
-- `providers.opencode.enabled`가 `false`면 1번(무료 티어 탐색) 자체를 생략한다.
+- `providers.pi.backends.openrouter-free`의 `models`에 켜진 모델이 하나도 없으면
+  1번(OpenRouter 무료 탐색, 최우선)을 생략한다.
+- `providers.opencode.enabled`가 `false`면 2번(opencode 무료 티어 탐색) 자체를
+  생략한다.
 - `providers.pi.backends.modal-qwen38`의 `models`에 켜진 모델이 하나도 없으면
-  2번(Modal 항상 포함)을 생략한다 — 예를 들어 지출을 잠깐 막고 싶을 때 끌 수
+  3번(Modal 항상 포함)을 생략한다 — 예를 들어 지출을 잠깐 막고 싶을 때 끌 수
   있다. `providers.pi.enabled`(Pi CLI 전체 스위치)는 이 판단에 영향을 주지
   않는다 — Modal은 Pi CLI 구독과 무관한 별도의 pay-per-use 배포이기
   때문이다.
 - `providers.pi.backends.nvidia-nim`의 `models`에 켜진 모델이 하나도 없으면
-  3번(NIM 항상 포함)을 생략한다.
+  4번(NIM 항상 포함)을 생략한다.
 - `providers.pi.backends.turbofieldfare`의 `models`에 켜진 모델이 하나도 없으면
-  4번(로컬 Gemma 4 최후 폴백)을 생략한다.
+  5번(로컬 Gemma 4 최후 폴백)을 생략한다.
 
 설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
-기본값(넷 다 켜짐)을 그대로 쓴다.
+기본값(다섯 다 켜짐)을 그대로 쓴다.
 
 **각 후보는 (agent, provider, model) 3튜플이다.** `orchestrate.py`의
 `--implement-agent`는 에이전트 레지스트리 키(`opencode`/`pi`/`piqwen` 등)만
 받는다 — provider 이름(`nvidia-nim`, `modal-qwen38`)을 그 자리에 넣으면 setup이
 "is not in the agents list"로 하드 실패한다. `--provider`는 별개 플래그이고
 기본값이 `opencode-go`라서, 빠뜨리면 의도한 백엔드가 아니라 조용히
-`opencode-go`로 나간다. 네 후보 원천은 다음과 같이 고정된다:
+`opencode-go`로 나간다. 다섯 후보 원천은 다음과 같이 고정된다:
 
 | 후보 원천 | `IMPL_AGENT`(`--implement-agent`) | `IMPL_PROVIDER`(`--provider`) | `IMPL_MODEL`(`--model`) |
 |---|---|---|---|
+| OpenRouter 무료 티어 (최우선) | `pi` | `openrouter` | 탐색된 OR 모델 (`IMPL_TIMEOUT=900`) |
 | opencode 무료 티어 | `opencode` | (전달해도 무시됨 — 템플릿이 `{provider}`를 안 씀) | 탐색된 `opencode/<모델>` |
 | Modal Qwen | `piqwen` | `modal-qwen38` | `qwen3.8-27b-q4_k_m` |
 | NVIDIA NIM | `pi` | `nvidia-nim` | config의 `nvidia-nim.models`에서 켜진 모델 |
@@ -78,35 +82,57 @@ Step 5/7/9의 모든 디스패치 명령은 이 표의 세 값을 **전부** 넘
 빠져도 오작동(잘못된 백엔드) 또는 하드 실패(잘못된 에이전트 이름) 중 하나로
 이어진다.
 
-1. (`providers.opencode.enabled`가 `true`일 때만) `discover_free_models.py`로
+**배정 순서:** 라운드에 태스크를 배정할 때는 OpenRouter 후보부터 채우고,
+남은 태스크를 나머지 레인(opencode, Modal, NIM)으로 채운다 — 병렬 구조
+자체(배치 크기 = 후보 수, 라운드 안 각 태스크는 서로 다른 모델)는 유지한다.
+
+1. (`providers.pi.backends.openrouter-free`의 `models`에 켜진 모델이 있을 때만)
+   `discover_openrouter_free.py`로 OpenRouter `:free` 무료 티어를 실측
+   탐색한다 — **1번 후보 원천(최우선)**이다. 다른 레인(opencode 무료 등)의
+   탐색 결과를 `--exclude`로 전달해 중복 모델을 제외하고, `smoke: ok`인 후보
+   전원이 `IMPL_AGENT=pi`, `IMPL_PROVIDER=openrouter-free`,
+   `IMPL_MODEL=<탐색된 OR 모델 ID>`, `IMPL_TIMEOUT=900` 후보가 된다. 이
+   후보들 사이에서도 배치 도중 하나가 막히면
+   [OpenRouter 폴백 순서](#openrouter-폴백-순서)를 따라 순차 전환한다 —
+   자세한 내용은 해당 섹션 참고.
+
+```bash
+python3 ~/.claude/skills/fiftybox-local/scripts/discover_openrouter_free.py \
+  --exclude "<다른 레인 탐색에서 나온 모델 ID들>"
+```
+
+   > 비고: `thinkingmachines/inkling:free` 등 inkling 계열 무료 변형은
+   > agentic-harness 게이트(403)로 스모크에서 `model` 분류로 제외될 수
+   > 있다 — 정상 동작이므로 오류로 취급하지 않는다.
+
+2. (`providers.opencode.enabled`가 `true`일 때만) `discover_free_models.py`로
    opencode Zen 무료 티어를 실측 탐색한다
    (각 후보에 실제 호출 1회 — 수십 초 걸릴 수 있다). `smoke: ok`인 것만
    후보로 삼는다. 이 후보들 사이에서도 배치 도중 하나가 막히면
    [opencode 폴백 순서](#opencode-폴백-순서)를 따라 순차 전환한다 — 자세한
-   내용은 해당 섹션 참고.
+   내용은 해당 섹션 참고. `metadata_degraded`가 `true`면 사용자에게 먼저
+   알린다:
+
+   > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
+   > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
 
 ```bash
 python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
 ```
 
-2. (`providers.pi.backends.modal-qwen38`가 config에서 켜져 있을 때만)
+3. (`providers.pi.backends.modal-qwen38`가 config에서 켜져 있을 때만)
    **`modal-qwen38`(Qwen3.8-27B)을 탐색 없이 항상 후보 1개로 추가한다** —
    `IMPL_AGENT=piqwen`, `IMPL_PROVIDER=modal-qwen38`,
    `IMPL_MODEL=qwen3.8-27b-q4_k_m`, `IMPL_TIMEOUT=1800`. 콜드스타트는 있지만
    가용성 자체는 항상 참으로 간주한다(Modal은 pay-per-use라 "무료 티어 소진"
    개념이 없다).
-3. (`providers.pi.backends.nvidia-nim`가 config에서 켜져 있을 때만)
+4. (`providers.pi.backends.nvidia-nim`가 config에서 켜져 있을 때만)
    **NIM을 탐색 없이 항상 후보 1개로 추가한다** — `IMPL_AGENT=pi`,
    `IMPL_PROVIDER=nvidia-nim`, `IMPL_MODEL=<config의 `nvidia-nim.models`에서
    켜진 첫 모델, JSON 키 순서 기준>`, `IMPL_TIMEOUT=600`. 이 후보 1개는
    내부적으로 [NIM 폴백 순서](#nim-폴백-순서)를 따라 순차 재시도한다 — 자세한
    내용은 해당 섹션 참고.
-4. `metadata_degraded`가 `true`면 사용자에게 먼저 알린다:
-
-   > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
-   > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
-
-5. 1~3번 후보가 **하나도 없을 때만**, (`providers.pi.backends.turbofieldfare`가
+5. 1~4번 후보가 **하나도 없을 때만**, (`providers.pi.backends.turbofieldfare`가
    config에서 켜져 있으면) 로컬 Gemma 4를 최후의 후보 1개로 추가한다 —
    `IMPL_AGENT=pi`, `IMPL_PROVIDER=turbofieldfare`,
    `IMPL_MODEL=gemma-4-26b-a4b-it`, `IMPL_TIMEOUT=86400`. 다른 후보가 하나라도
@@ -119,10 +145,10 @@ python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
    > 수 시간이 걸리고, 그동안 이 맥이 계속 바쁘며 다른 fiftybox 실행이
    > 막힙니다.
 
-6. `smoke: ok` 후보(설정에서 켜진 opencode 무료 + modal-qwen38 + nvidia-nim +
-   turbofieldfare)가 하나도 없으면 중단하고 보고한다. **유료 모델로 임의
-   전환하지 않는다.** config에서 넷 다 껐다면 `/fiftybox-config`로 최소
-   하나는 켜야 한다고 안내한다.
+6. `smoke: ok` 후보(설정에서 켜진 openrouter-free + opencode 무료 + modal-qwen38 +
+   nvidia-nim + turbofieldfare)가 하나도 없으면 중단하고 보고한다.
+   **유료 모델로 임의 전환하지 않는다.** config에서 다섯 다 껐다면
+   `/fiftybox-config`로 최소 하나는 켜야 한다고 안내한다.
 
 수동 모드(`--provider`/`--model` 직접 지정)에서는 이 탐색 전체를 건너뛰고
 지정된 provider/model 쌍들을 그대로 후보로 쓴다.
@@ -177,6 +203,47 @@ done
 
 ---
 
+## OpenRouter 폴백 순서
+
+OpenRouter 후보는 매 실행 `discover_openrouter_free.py`가 실측한 healthy
+`:free` 모델 목록이며, 선호 순위는 config
+`providers.pi.backends.openrouter-free.models`의 JSON 키 순서를 그대로 따른다 —
+리포 기본값은:
+
+1. `z-ai/glm-5.2:free`
+2. `poolside/laguna-s-2.1:free`
+3. `thinkingmachines/inkling:free`
+4. `thinkingmachines/inkling-small:free`
+5. `cohere/north-mini-code:free`
+
+**비고:** inkling 계열 무료 변형은 agentic-harness 게이트(403)로 스모크에서
+`model` 분류로 제외될 수 있다 — 정상 동작이므로 오류로 취급하지 않는다.
+
+**발동 조건**은 [실패 처리](#실패-처리)의 `model`/`model_busy` 분류일 때만이다.
+`upstream_provider_shared_pool`(`limit_source` 문구)가 붙은 429와
+503·`overloaded`는 모델 단위 일시 혼잡이므로 `model_busy`로 분류하고 다음
+후보로 넘어간다. 반면 문구 없는 순수 429는 계정 단위 한도(무료 레인 소진)이므로
+`window`로 분류한다 — 모델을 바꿔봤자 소용없다. 탐색 결과의 `window_exhausted`
+신호도 OpenRouter 레인 전체 소진으로 취급한다.
+
+**절차 (`model`/`model_busy`일 때만):**
+1. 실패한 태스크를 선호 순위상 **다음 healthy OR 모델**로 재디스패치한다
+   (`IMPL_AGENT=pi`, `IMPL_PROVIDER=openrouter-free`, `IMPL_MODEL=<다음 모델>`,
+   `IMPL_TIMEOUT=900` — 나머지 인자는 동일). 이 전환은
+   [안전 계약](#안전-계약)의 "자동 재시도는 태스크당 1회만"과 별개다 — OR
+   목록 소진 전까지는 provider 내부 전환이지 재시도가 아니다.
+2. 목록의 모든 모델을 다 소진하면, 그때 OpenRouter 레인 전체를 "소진"으로
+   처리하고 [모델 소진 처리](#모델-소진-처리) 절차로 넘어간다.
+3. 어느 단계에서 전환했든 `<artifactDir>/model-choice.json`의 `history`에
+   `{"from": "openrouter-free/<이전 모델>", "to": "openrouter-free/<다음 모델>" 또는
+   "<다른 provider>", "reason": "model" | "model_busy" | "window"}`을
+   append한다.
+
+형제 레인(opencode 후보, modal-qwen38, nvidia-nim)은 이 전환 동안 영향받지
+않고 계속 진행한다.
+
+---
+
 ## NIM 폴백 순서
 
 `nvidia-nim` 후보 하나에는 실제로 모델 여러 개가 묶여 있다. 순서는
@@ -208,8 +275,8 @@ TUI에서 조정 가능)를 그대로 따른다 — 리포 기본값은:
    "<다른 provider>", "reason": "model" | "window" | "credit" | "auth" |
    "timeout"}`을 append한다.
 
-형제 레인(opencode 후보, modal-qwen38)은 이 전환 동안 영향받지 않고 계속
-진행한다.
+형제 레인(openrouter-free 후보, opencode 후보, modal-qwen38)은 이 전환 동안
+영향받지 않고 계속 진행한다.
 
 ---
 
@@ -238,8 +305,8 @@ opencode 레인 전체를 소진 처리한다.
 2. 정렬 순서(`sort_candidates` 결과: smoke: ok 우선, 그다음 context
    내림차순)상 다음 opencode 후보 중 **차단 목록에 없고 이번 라운드의 다른
    태스크가 쓰고 있지 않은** 모델로 재디스패치한다.
-3. 그런 모델이 없으면: 이번 라운드에 아직 배정되지 않은 다른 lane(Modal,
-   NIM)이 비어 있으면 그쪽으로 재배정한다. 그것도 없으면 이 태스크를 **다음
+3. 그런 모델이 없으면: 이번 라운드에 아직 배정되지 않은 다른 lane(OpenRouter,
+   Modal, NIM)이 비어 있으면 그쪽으로 재배정한다. 그것도 없으면 이 태스크를 **다음
    라운드로 미룬다(defer)** — 형제 태스크가 끝나면 모델이 비므로, 다음
    라운드 시작 시 차단 목록에 없는 healthy opencode 모델에 재배정할 수 있다.
    "같은 모델에 태스크를 몰지 않는다"는 원칙은 *동시* 실행에 대한 것이라
@@ -251,14 +318,14 @@ opencode 레인 전체를 소진 처리한다.
    "<다른 provider>" 또는 "deferred", "reason": "model" | "model_busy" |
    "window"}`을 append한다.
 
-형제 레인(modal-qwen38, nvidia-nim)은 이 전환 동안 영향받지 않고 계속
-진행한다.
+형제 레인(openrouter-free, modal-qwen38, nvidia-nim)은 이 전환 동안 영향받지 않고
+계속 진행한다.
 
 ---
 
 ## 로컬 Gemma 4 최후 폴백
 
-`turbofieldfare`(로컬 Gemma 4 26B-A4B IT)는 1~3번 후보가 **하나도 남지
+`turbofieldfare`(로컬 Gemma 4 26B-A4B IT)는 1~4번 후보가 **하나도 남지
 않았을 때만** 쓰는 최후의 후보다. 다른 후보와 절대 같은 배치에 섞이지
 않는다 — 이 레인이 선택되면 그 라운드는 항상 배치 크기 1, 순차 실행이다
 (서버가 프로세스 1개·모델 1개라 병렬이 불가능하다).
@@ -367,7 +434,7 @@ fiftybox 실행이 막힌다. 품질도 무료 원격 모델보다 낮을 수 �
 | `insufficient credit`, `balance`, 402, `quota exceeded` | `credit` | 계정 |
 | 문구 없는 순수 429, `rate limit`, `usage limit`, `daily`, `weekly` | `window` | 계정 |
 | `Unknown model`, 404, 모델 ID 거부, `deprecated` | `model` | 모델 |
-| 503, `overloaded`, `capacity`, `queue full` | `model_busy` | 모델 |
+| `upstream_provider_shared_pool`(`limit_source` 문구) 429, 503, `overloaded`, `capacity`, `queue full` | `model_busy` | 모델 |
 | `EXIT_CODE=124` | `timeout` | 태스크 |
 | `EXIT_CODE=3` (변경 파일 없음) | `no_changes` | 태스크 |
 | `EXIT_CODE=1` + `not in the agents list`, `unrecognized arguments`, 소유권 위반 | `orchestrate` | 스킬/설정 버그 |
@@ -390,7 +457,8 @@ Modal·opencode는 그대로 돈다. 모든 레인이 막혔을 때만 전체를
 보고한다.
 
 **모델 단위(`model`·`model_busy`) — 그 모델만 차단 목록에 넣고 같은 레인의
-다음 모델로 스왑한다.** 절차는 [NIM 폴백 순서](#nim-폴백-순서) /
+다음 모델로 스왑한다.** 절차는 [OpenRouter 폴백 순서](#openrouter-폴백-순서) /
+[NIM 폴백 순서](#nim-폴백-순서) /
 [opencode 폴백 순서](#opencode-폴백-순서)를 따른다.
 
 **태스크 국소(`timeout`·`no_changes`·`unknown`) — 모델을 바꾸지 않는다.**
@@ -466,11 +534,11 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
    때문이다. 이 검사는 `--provider`(생략 시 기본값 `opencode-go`)가 실제
    Pi 백엔드 목록에 있는지 본다 — 없으면 exit 1. **그래서 `--provider`를
    반드시 넘겨야 진짜 preflight가 된다.** 생략하면 이번 실행에 안 쓸
-   `opencode-go`만 검증하고 정작 쓸 `nvidia-nim`/`modal-qwen38`은 확인 없이
-   지나간다.
+   `opencode-go`만 검증하고 정작 쓸 `openrouter-free`/`nvidia-nim`/`modal-qwen38`은
+   확인 없이 지나간다.
 
-Pi 백엔드 후보가 둘(Modal + NIM) 이상이면 한 번의 setup 호출로는 하나만
-검증된다. 나머지는 검증되지 않은 채 남고, 문제가 있으면 Step 5에서
+Pi 백엔드 후보가 둘(openrouter-free + nvidia-nim 등) 이상이면 한 번의 setup
+호출로는 하나만 검증된다. 나머지는 검증되지 않은 채 남고, 문제가 있으면 Step 5에서
 [실패 처리](#실패-처리)의 `orchestrate`/`model`로 드러난다.
 
 JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다. 설계 문서를 복사하고
@@ -544,7 +612,9 @@ echo "EXIT_CODE=$?"
 ' > "<artifactDir>/implement-task-N.out" 2>&1 &
 ```
 
-`modal-qwen38` 레인에는 `--implement-agent piqwen --provider modal-qwen38
+`openrouter-free` 레인에는 `--implement-agent pi --provider openrouter-free
+--implementation-timeout 900`을 붙인다. `modal-qwen38` 레인에는
+`--implement-agent piqwen --provider modal-qwen38
 --implementation-timeout 1800`을 붙인다. `turbofieldfare` 레인에는
 `--implement-agent pi --provider turbofieldfare --implementation-timeout
 86400`을 붙인다.
@@ -626,8 +696,10 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --model "<IMPL_MODEL>"
 ```
 
-`modal-qwen38`이면 웨이크업 후 `--implement-agent piqwen --provider
-modal-qwen38 --implementation-timeout 1800`. `turbofieldfare`면
+`openrouter-free`면 `--implement-agent pi --provider openrouter-free
+--implementation-timeout 900`. `modal-qwen38`이면 웨이크업 후
+`--implement-agent piqwen --provider modal-qwen38 --implementation-timeout
+1800`. `turbofieldfare`면
 [서버 preflight](#로컬-gemma-4-최후-폴백) 후 `--implement-agent pi --provider
 turbofieldfare --implementation-timeout 86400`.
 
@@ -664,8 +736,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
    않는다.
 4. 조건을 만족하는 후보가 없으면 그 태스크를 다음 라운드로 미룬다
    ([opencode 폴백 순서](#opencode-폴백-순서) 3번과 같은 보류 규칙).
-5. 남은 라운드도 후보도 없으면 중단하고 보고한다. **유료 모델로 임의
-   전환하지 않는다.**
+5. 남은 라운드도 후보도 없으면 중단하고 보고한다.
+   **유료 모델로 임의 전환하지 않는다.**
 
 모든 교체는 `<artifactDir>/model-choice.json`의 `history`에, 차단은
 `blocklist`에 append한다. **이 파일은 orchestrate.py가 읽지도 쓰지도 않는
@@ -696,7 +768,9 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 - provider는 테스트 파일을 수정하지 않는다. 수정했으면 되돌리고 재실행한다
 - `--dangerously-skip-permissions`는 orchestrate가 만든 격리된 워크트리 안에서만
   유효하다
-- 무료 원격 후보(opencode/Modal/NIM)가 모두 막히면 로컬 Gemma 4
+- **OpenRouter는 `:free` 모델만 사용한다. 어떤 상황에서도 유료 모델·유료
+  변형으로 전환하지 않는다**
+- 무료 원격 후보(openrouter-free/opencode/Modal/NIM)가 모두 막히면 로컬 Gemma 4
   (`turbofieldfare`, 켜져 있을 때)로 최후 시도한다. 그마저 없거나 막히면
   중단한다. 유료 모델로 넘어가지 않는다
 - `turbofieldfare` 레인에는 `--auto-resume`을 절대 붙이지 않는다(watcher

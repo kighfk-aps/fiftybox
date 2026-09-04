@@ -49,6 +49,13 @@ description: fiftybox-execute/fiftybox-local이 쓰는 CLI provider(Pi, Codex, C
         "moonshotai/kimi-k3": true,
         "poolside/laguna-xs-2.1": true,
         "minimaxai/minimax-m3": true
+      }},
+      "openrouter-free": {"models": {
+        "z-ai/glm-5.2:free": true,
+        "poolside/laguna-s-2.1:free": true,
+        "thinkingmachines/inkling:free": true,
+        "thinkingmachines/inkling-small:free": true,
+        "cohere/north-mini-code:free": true
       }}
     }},
     "grok": {"enabled": true, "models": {"grok-4.6": true}},

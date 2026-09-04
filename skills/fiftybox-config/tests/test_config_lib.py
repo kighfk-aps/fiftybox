@@ -140,3 +140,28 @@ def test_remove_model_on_pi_backend():
     cfg = cl.default_config()
     cl.remove_model(cfg, "pi", "glm-5.3-flash", backend="zai-coding")
     assert "glm-5.3-flash" not in cfg["providers"]["pi"]["backends"]["zai-coding"]["models"]
+
+
+def test_default_config_has_openrouter_free_backend():
+    cfg = cl.default_config()
+    assert "openrouter-free" in cfg["providers"]["pi"]["backends"]
+
+
+def test_openrouter_default_models_are_free_variants_in_preference_order():
+    cfg = cl.default_config()
+    models = cfg["providers"]["pi"]["backends"]["openrouter-free"]["models"]
+    assert list(models.keys()) == [
+        "z-ai/glm-5.2:free",
+        "poolside/laguna-s-2.1:free",
+        "thinkingmachines/inkling:free",
+        "thinkingmachines/inkling-small:free",
+        "cohere/north-mini-code:free",
+    ]
+    assert all(value is True for value in models.values())
+
+
+def test_openrouter_models_all_carry_free_suffix():
+    cfg = cl.default_config()
+    models = cfg["providers"]["pi"]["backends"]["openrouter-free"]["models"]
+    assert models
+    assert all(model_id.endswith(":free") for model_id in models)
