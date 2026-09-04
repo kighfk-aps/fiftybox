@@ -1,0 +1,8 @@
+--- /dev/null
++++ b/src/greet.py
+@@ -0,0 +1,8 @@
++def greet(name: str) -> str:
++    """Return 'Hello, <name>!' for a non-empty name."""
++    if not name or not name.strip():
++        raise ValueError("name must be non-empty")
++    return f"Hello, {name.strip()}!"

@@ -1,0 +1,6 @@
+--- /dev/null
++++ b/src/greet.py
+@@ -0,0 +1,4 @@
++def greet(name: str) -> str:
++    """Return 'Hello, <name>!' for a non-empty name."""
++    return f"Hello, {name}!"

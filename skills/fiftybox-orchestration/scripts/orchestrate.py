@@ -200,6 +200,15 @@ def resolve_agent_config(skill_dir: Path, args: argparse.Namespace) -> dict[str,
 
 
 def build_agent_cmd(agent_name: str, config: dict, *, prompt: str, task: str, model: str, provider: str, adapters_dir: Path) -> list[str]:
+    # Test hook: replace the child with an executable that receives the task
+    # as argv[1]; the system prompt/model/provider ride along via env. Lets
+    # engine tests exercise every phase without a real model behind the child.
+    fake_cmd = os.environ.get("FIFTYBOX_CHILD_CMD_OVERRIDE", "").strip()
+    if fake_cmd:
+        os.environ["FIFTYBOX_CHILD_PROMPT"] = prompt
+        os.environ["FIFTYBOX_CHILD_MODEL"] = model
+        os.environ["FIFTYBOX_CHILD_PROVIDER"] = provider
+        return [fake_cmd, task]
     if agent_name not in config["agents"]:
         raise ValueError(f"Unknown agent '{agent_name}'. Add it to config.json or run ./configure.sh.")
     agent_def = config["agents"][agent_name]
@@ -3411,6 +3420,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--model", default="deepseek-v4-flash")
     parser.add_argument(
+        "--agent-config",
+        help="Directory containing config.json for the agent registry "
+             "(default: ~/.claude/skills/orchestrate). Also settable via "
+             "the FIFTYBOX_AGENT_CONFIG environment variable.",
+    )
+    parser.add_argument(
         "--explore-model",
         default="deepseek-v4-flash",
         help="Lightweight model for read-only exploration (default: deepseek-v4-flash). "
@@ -3491,7 +3506,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 
 def main(argv: list[str] | None = None) -> int:
+    global SKILL_DIR
     args = parse_args(argv or sys.argv[1:])
+    override_dir = (getattr(args, "agent_config", "") or "").strip() \
+        or os.environ.get("FIFTYBOX_AGENT_CONFIG", "").strip()
+    if override_dir:
+        SKILL_DIR = Path(override_dir).expanduser().resolve()
     cwd = Path(args.cwd).expanduser().resolve()
     root = git_root(cwd)
 
