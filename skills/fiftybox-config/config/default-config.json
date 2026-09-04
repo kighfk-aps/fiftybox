@@ -49,7 +49,7 @@
     "commandcode": {
       "enabled": true,
       "models": {
-        "qwen/qwen3.7-flash": true,
+        "meta/muse-spark-1.2-contributor": true,
         "zai-org/glm-5.2": true
       }
     },

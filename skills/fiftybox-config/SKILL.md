@@ -59,7 +59,7 @@ description: fiftybox-execute/fiftybox-local이 쓰는 CLI provider(Pi, Codex, C
       }}
     }},
     "grok": {"enabled": true, "models": {"grok-4.6": true}},
-    "commandcode": {"enabled": true, "models": {"qwen/qwen3.7-flash": true, "zai-org/glm-5.2": true}},
+    "commandcode": {"enabled": true, "models": {"meta/muse-spark-1.2-contributor": true, "zai-org/glm-5.2": true}},
     "opencode": {"enabled": true}
   }
 }

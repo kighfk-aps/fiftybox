@@ -58,6 +58,12 @@ def test_save_and_reload_round_trips(tmp_path):
     assert reloaded["providers"]["grok"]["enabled"] is False
 
 
+def test_commandcode_default_model_is_muse_spark_contributor():
+    cfg = cl.default_config()
+    models = cfg["providers"]["commandcode"]["models"]
+    assert cl.first_enabled_model(models) == "meta/muse-spark-1.2-contributor"
+
+
 def test_first_enabled_model_returns_first_true():
     assert cl.first_enabled_model({"a": False, "b": True, "c": True}) == "b"
 

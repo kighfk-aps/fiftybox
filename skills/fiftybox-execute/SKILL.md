@@ -88,7 +88,7 @@ deterministic lane allocator로 네 실행 lane 중 하나에 배정한다.
 | 1 | 보안·데이터 무결성·동시성·새 핵심 인터페이스처럼 강한 추론과 제한적 소유 파일이 필요한 작업 | `codex-write` / `gpt-5.6-luna` |
 | 2 | 화면·이미지·브라우저 검증 또는 넓은 문맥을 가진 독립 구현 작업 | `pi` / `zai-coding` / `glm-5.3-flash` |
 | 3 | 외부 API·배포 설정·기존 Grok 도구/계정 맥락이 직접 필요한 통합 작업 | `grok` / `grok-4.6` |
-| 4 | 위에 속하지 않는 파일 국소적·결정적인 구현 및 테스트 통과 작업 | `commandcode` / `qwen/qwen3.7-flash` |
+| 4 | 위에 속하지 않는 파일 국소적·결정적인 구현 및 테스트 통과 작업 | `commandcode` / `meta/muse-spark-1.2-contributor` |
 
 실제 배정은 각 우선순위 자리 인덱스로 `resolve_lane`을 계산한 결과를 쓴다:
 `lane_priority[i]`가 `enabled: false`(또는 `enabled: true`지만 켜진 모델이
@@ -108,7 +108,7 @@ deterministic lane allocator로 네 실행 lane 중 하나에 배정한다.
 - `IMPL_AGENT=<provider>`
 - `pi`는 `IMPL_PROVIDER=zai-coding`, `IMPL_MODEL=glm-5.3-flash`를 기본으로 쓴다.
 - `commandcode`/`codex-write`/`grok`는 모델 생략 시 각각
-  `qwen/qwen3.7-flash`/`gpt-5.6-luna`/`grok-4.6`을 쓴다.
+  `meta/muse-spark-1.2-contributor`/`gpt-5.6-luna`/`grok-4.6`을 쓴다.
 - 그 외 agent는 orchestrate 기본 provider/model을 유지한다.
 
 **`--provider`가 Pi 백엔드일 때** (`opencode-go`, `zai-coding`, `modal-qwen38` 등):
@@ -124,6 +124,8 @@ deterministic lane allocator로 네 실행 lane 중 하나에 배정한다.
   → agent `pi`, provider `zai-coding`, model `glm-5.3-flash`
 - `/fiftybox-execute "add caching" --provider opencode-go`
   → agent `pi`, provider `opencode-go`, model `deepseek-v4-flash`
+- `/fiftybox-execute "add caching" --provider commandcode`
+  → agent `commandcode`, model `meta/muse-spark-1.2-contributor`
 - `/fiftybox-execute "add caching" --provider commandcode --model zai-org/glm-5.2`
   → agent `commandcode`, model `zai-org/glm-5.2`
 - `/fiftybox-execute "add caching" --provider grok --model grok-4.6`
@@ -167,7 +169,7 @@ provider에 따라 조건부다.
 
 ```bash
 python3 ~/.claude/skills/fiftybox-execute/scripts/cc_preflight.py \
-  --require-model qwen/qwen3.7-flash \
+  --require-model meta/muse-spark-1.2-contributor \
   --require-model zai-org/glm-5.2
 ```
 
@@ -235,7 +237,7 @@ lane allocator를 건너뛰고 그 선택을 모든 태스크에 쓴다.
 ## Task Batches
 
 ### Batch 1 (parallel)
-- Task A: <설명> — 파일: [목록] — lane: commandcode/qwen/qwen3.7-flash (기존 패턴 복제, 파일 1개)
+- Task A: <설명> — 파일: [목록] — lane: commandcode/meta/muse-spark-1.2-contributor (기존 패턴 복제, 파일 1개)
 - Task B: <설명> — 파일: [목록] — lane: codex-write/gpt-5.6-luna (새 핵심 인터페이스)
 
 ### Batch 2 (parallel, after Batch 1)

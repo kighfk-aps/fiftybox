@@ -23,6 +23,10 @@ has "$SKILL" "~/.claude/fiftybox-config.json" "SKILL.md documents the config fil
 has "$SKILL" "config_tui.py" "SKILL.md references the TUI script"
 has "$SKILL" "! python3" "SKILL.md tells the user to run the TUI themselves via !"
 has "$SKILL" "lane_priority" "SKILL.md documents the lane_priority field"
+has "$DEFAULT_CFG" "meta/muse-spark-1.2-contributor" \
+    "default-config.json defaults CommandCode to Muse Spark 1.2 Contributor"
+has "$SKILL" "meta/muse-spark-1.2-contributor" \
+    "SKILL.md example defaults CommandCode to Muse Spark 1.2 Contributor"
 
 python3 -c "import json; json.load(open('$DEFAULT_CFG'))" \
     && pass "default-config.json is valid JSON" \
