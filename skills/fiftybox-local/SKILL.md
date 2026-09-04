@@ -72,7 +72,7 @@ $fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
 
 | 후보 원천 | `IMPL_AGENT`(`--implement-agent`) | `IMPL_PROVIDER`(`--provider`) | `IMPL_MODEL`(`--model`) |
 |---|---|---|---|
-| OpenRouter 무료 티어 (최우선) | `pi` | `openrouter` | 탐색된 OR 모델 (`IMPL_TIMEOUT=900`) |
+| OpenRouter 무료 티어 (최우선) | `pi` | `openrouter-free` | 탐색된 OR 모델 (`IMPL_TIMEOUT=900`) |
 | opencode 무료 티어 | `opencode` | (전달해도 무시됨 — 템플릿이 `{provider}`를 안 씀) | 탐색된 `opencode/<모델>` |
 | Modal Qwen | `piqwen` | `modal-qwen38` | `qwen3.8-27b-q4_k_m` |
 | NVIDIA NIM | `pi` | `nvidia-nim` | config의 `nvidia-nim.models`에서 켜진 모델 |

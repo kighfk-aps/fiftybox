@@ -48,6 +48,12 @@ has "$SKILL" "900" "SKILL.md documents the 900s OpenRouter implementation timeou
 has "$SKILL" "upstream_provider_shared_pool" "SKILL.md classifies shared-pool 429 as model-level"
 has "$SKILL" ":free" "SKILL.md restricts OpenRouter to :free models"
 has "$SKILL" "OpenRouter 폴백 순서" "SKILL.md defines the OpenRouter fallback order section"
+
+if grep -qF '`openrouter` |' "$SKILL"; then
+    fail "3-tuple table uses bare openrouter provider (must be openrouter-free)"
+else
+    pass "3-tuple table uses the openrouter-free provider id"
+fi
 has "$SKILL" "최우선" "SKILL.md marks OpenRouter as the top-priority source"
 
 echo ""
