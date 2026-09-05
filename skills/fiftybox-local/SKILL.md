@@ -436,7 +436,7 @@ fiftybox 실행이 막힌다. 품질도 무료 원격 모델보다 낮을 수 �
 | `Not authenticated`, 401, Keychain 조회 실패 | `auth` | 계정 |
 | `insufficient credit`, `balance`, 402, `quota exceeded` | `credit` | 계정 |
 | 문구 없는 순수 429, `rate limit`, `usage limit`, `daily`, `weekly` | `window` | 계정 |
-| `Unknown model`, 404, 모델 ID 거부, `deprecated` | `model` | 모델 |
+| `Unknown model`, 404, **410**, 모델 ID 거부, `deprecated` | `model` | 모델 |
 | `upstream_provider_shared_pool`(`limit_source` 문구) 429, 503, `overloaded`, `capacity`, `queue full` | `model_busy` | 모델 |
 | `EXIT_CODE=124` | `timeout` | 태스크 |
 | `EXIT_CODE=3` (변경 파일 없음) | `no_changes` | 태스크 |
