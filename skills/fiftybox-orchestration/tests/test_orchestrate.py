@@ -2326,13 +2326,59 @@ def test_fast_forward_local_main_moves_the_branch():
         assert moved == head
 
 
-def test_fast_forward_local_main_skips_when_main_is_checked_out():
+def test_fast_forward_local_main_advances_a_clean_checked_out_main():
+    """루트에 main이 걸려 있어도 깨끗하면 merge --ff-only 로 전진한다."""
     with tempfile.TemporaryDirectory() as tmp:
-        root, _worktree, _artifact_dir = _sandbox_repo(Path(tmp))
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=root,
+        root, worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feature"], cwd=worktree, check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
                               capture_output=True, text=True, check=True).stdout.strip()
-        assert orchestrate.fast_forward_local_main(root, head) == \
-            "main is checked out in a worktree"
+
+        assert orchestrate.fast_forward_local_main(root, head) is None
+
+        moved = subprocess.run(["git", "rev-parse", "main"], cwd=root,
+                               capture_output=True, text=True, check=True).stdout.strip()
+        assert moved == head
+
+
+def test_fast_forward_local_main_skips_a_dirty_checked_out_main():
+    """추적 중인 파일에 미저장 편집이 있으면 건드리지 않는다.
+
+    새 untracked 파일(이번 실행 자신의 artifactDir 등)은 일부러 dirty로
+    치지 않는다 — 그건 별도 테스트가 검증한다. 여기서는 이미 커밋된
+    tracked.txt를 고쳐서 진짜 "저장 안 된 편집"을 재현한다.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feature"], cwd=worktree, check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        (root / "tracked.txt").write_text("edited without committing\n")
+
+        reason = orchestrate.fast_forward_local_main(root, head)
+        assert reason == "main worktree has uncommitted changes"
+
+
+def test_fast_forward_local_main_ignores_untracked_files_like_its_own_artifact_dir():
+    """이번 실행 자신의 artifactDir(.omx/artifacts/...)가 untracked여도 막지 않는다.
+
+    herdr-config처럼 .omx/를 .gitignore하지 않은 리포에서, complete 페이즈가
+    자기 자신이 방금 쓴 로그 때문에 스스로 막히면 안 된다.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+        subprocess.run(["git", "add", "-A"], cwd=worktree, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "feature"], cwd=worktree, check=True)
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=worktree,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        (root / "art" / "extra-log.md").write_text("untracked artifact output\n")
+
+        assert orchestrate.fast_forward_local_main(root, head) is None
 
 
 def test_fast_forward_local_main_skips_a_non_fast_forward():
@@ -2476,18 +2522,37 @@ def test_complete_without_a_remote_merges_and_moves_local_main():
 
 
 def test_complete_reports_local_main_skip_but_still_succeeds_with_a_remote():
-    """origin/main 에 이미 올라갔으므로 로컬 main 갱신 실패는 경고다."""
+    """origin/main 에 이미 올라갔으므로 로컬 main 갱신 실패는 경고다.
+
+    root 의 main 워크트리 자체가 더러워서(추적 파일 미저장 편집) FF 가
+    불가능한 경우를 재현한다 — 단지 체크아웃돼 있다는 사실만으로는 더 이상
+    막히지 않는다(그게 이 수정의 목적이다).
+    """
     with tempfile.TemporaryDirectory() as tmp:
         root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
         (worktree / "feature.txt").write_text("work\n")
-        # _sandbox_repo 의 root 는 main 을 체크아웃한 상태라 FF 가 불가능하다.
+        (root / "tracked.txt").write_text("edited without committing\n")
 
         rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
         assert rc == 0
 
         summary = json.loads((artifact_dir / "summary.json").read_text())
         assert summary["phases"]["complete"]["localMainUpdated"] is False
-        assert "checked out" in summary["phases"]["complete"]["localMainSkipReason"]
+        assert "uncommitted" in summary["phases"]["complete"]["localMainSkipReason"]
+
+
+def test_complete_advances_a_clean_checked_out_main_with_a_remote():
+    """root 가 main 을 체크아웃 중이어도 깨끗하면 로컬 main 도 함께 전진한다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        root, worktree, artifact_dir = _sandbox_repo(Path(tmp))
+        (worktree / "feature.txt").write_text("work\n")
+
+        rc = orchestrate.phase_complete(root, artifact_dir, _complete_args())
+        assert rc == 0
+
+        summary = json.loads((artifact_dir / "summary.json").read_text())
+        assert summary["phases"]["complete"]["localMainUpdated"] is True
+        assert "localMainSkipReason" not in summary["phases"]["complete"]
 
 
 def test_has_failed_phase_recognizes_fetch_failed_and_local_main_blocked():

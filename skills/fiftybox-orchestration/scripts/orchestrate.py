@@ -1041,21 +1041,59 @@ def main_is_checked_out(root: Path) -> bool:
                for line in result.stdout.splitlines())
 
 
+def main_worktree_path(root: Path) -> Path | None:
+    """Path of the worktree holding refs/heads/main, or None when parked.
+
+    `git worktree list --porcelain` emits a `worktree <path>` line followed by
+    the branch line for that same entry, so the last path seen before the
+    branch line is the one that owns main.
+    """
+    result = run(["git", "worktree", "list", "--porcelain"], root)
+    if result.returncode != 0:
+        return None
+    current: Path | None = None
+    for line in result.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("worktree "):
+            current = Path(line[len("worktree "):])
+        elif line == "branch refs/heads/main":
+            return current
+    return None
+
+
 def fast_forward_local_main(root: Path, commit: str) -> str | None:
     """Move local main to `commit`; return a reason string when skipped.
 
-    None means the branch moved. Callers treat a skip as fatal only when
-    there is no remote, because then local main was the sole destination and
-    the merge commit would otherwise be unreachable.
+    None means the branch moved. `git branch -f` cannot move a branch that is
+    checked out, so when a worktree holds main the move happens inside that
+    worktree with `merge --ff-only` instead — but only when it is clean, so a
+    person's uncommitted work is never touched.
     """
-    if main_is_checked_out(root):
-        return "main is checked out in a worktree"
     ancestor = run(["git", "merge-base", "--is-ancestor", "main", commit], root)
     if ancestor.returncode != 0:
         return "local main is not an ancestor of the merged commit"
-    updated = run(["git", "branch", "-f", "main", commit], root)
-    if updated.returncode != 0:
-        return f"git branch -f main failed: {updated.stdout.strip()}"
+
+    holder = main_worktree_path(root)
+    if holder is None:
+        updated = run(["git", "branch", "-f", "main", commit], root)
+        if updated.returncode != 0:
+            return f"git branch -f main failed: {updated.stdout.strip()}"
+        return None
+
+    # Untracked-only is deliberately excluded: this run's own artifactDir
+    # (`.omx/artifacts/...`) lives inside this same worktree and is untracked
+    # whenever the repo has no `.omx/` gitignore entry (real case: herdr-config).
+    # Counting it as "dirty" would block every merge. A genuine path collision
+    # with the incoming commit is still caught below by the merge itself.
+    dirty = run(["git", "status", "--porcelain", "--untracked-files=no"], holder)
+    if dirty.returncode != 0:
+        return "main worktree status is unreadable"
+    if dirty.stdout.strip():
+        return "main worktree has uncommitted changes"
+
+    merged = run(["git", "merge", "--ff-only", commit], holder)
+    if merged.returncode != 0:
+        return f"git merge --ff-only in main worktree failed: {merged.stdout.strip()}"
     return None
 
 
