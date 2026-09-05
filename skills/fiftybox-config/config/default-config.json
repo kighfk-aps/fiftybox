@@ -22,10 +22,10 @@
         },
         "nvidia-nim": {
           "models": {
-            "openai/gpt-oss-120b": true,
-            "moonshotai/kimi-k3": true,
+            "minimaxai/minimax-m3": true,
             "poolside/laguna-xs-2.1": true,
-            "minimaxai/minimax-m3": true
+            "moonshotai/kimi-k3": true,
+            "openai/gpt-oss-120b": false
           }
         },
         "openrouter-free": {

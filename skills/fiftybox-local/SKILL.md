@@ -250,10 +250,13 @@ OpenRouter 후보는 매 실행 `discover_openrouter_free.py`가 실측한 healt
 `providers.pi.backends.nvidia-nim.models`의 JSON 키 순서(=`/fiftybox-config`
 TUI에서 조정 가능)를 그대로 따른다 — 리포 기본값은:
 
-1. `openai/gpt-oss-120b` — executor 실측 테스트에서 속도·정답률 1순위
-2. `moonshotai/kimi-k3`
-3. `poolside/laguna-xs-2.1`
-4. `minimaxai/minimax-m3`
+1. `minimaxai/minimax-m3` — 2026-09-04 실측 1초 응답, 1순위
+2. `poolside/laguna-xs-2.1` — 2026-09-04 실측 2초 응답
+3. `moonshotai/kimi-k3` — 2026-09-04 실측 120초 이상 무응답(타임아웃). 살아있을 때도 있어
+   목록엔 남기되 맨 뒤로 뺐다
+
+> 2026-09-04 실측: `openai/gpt-oss-120b`는 HTTP 410(배포 중단)으로 응답한다.
+> NVIDIA가 복구하면 `/fiftybox-config`에서 다시 켤 수 있다.
 
 **⚠️ NIM의 40 RPM과 무료 크레딧은 계정 단위 풀이다.** [실패 처리](#실패-처리)
 분류표에서 `window`/`credit`/`auth`로 분류되는 신호(429·rate limit·크레딧
