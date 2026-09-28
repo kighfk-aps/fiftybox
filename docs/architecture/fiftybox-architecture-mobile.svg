@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 360 1000" role="img" aria-labelledby="mobile-title mobile-desc">
+  <title id="mobile-title">Fiftybox 모바일 아키텍처 설명</title>
+  <desc id="mobile-desc">안전장치가 있는 AI 에이전트 작업장이라는 비유로 설명하는 Fiftybox 모바일 아키텍처입니다.</desc>
+  <style>
+    .bg{fill:#f7f8fc}.panel{fill:#fff;stroke:#cbd5e1;stroke-width:1.2}.band{fill:#e8eefc}.ink{fill:#172033}.muted{fill:#526277}
+    .node{fill:#fff;stroke:#7891ba;stroke-width:1.2}.agent{fill:#eef5ff;stroke:#3976b9;stroke-width:1.2}.store{fill:#f4efff;stroke:#8155c7;stroke-width:1.2}.gate{fill:#effaf2;stroke:#368552;stroke-width:1.2}.risk{fill:#fff4e5;stroke:#c9791d;stroke-width:1.2}.missing{fill:#fff0f0;stroke:#c74b4b;stroke-width:1.2;stroke-dasharray:4 3}
+    .title{font-family:Helvetica;font-size:21px;font-weight:700}.h{font-family:Helvetica;font-size:12px;font-weight:700}.t{font-family:Helvetica;font-size:10px}.s{font-family:Helvetica;font-size:9px}.code{font-family:Menlo;font-size:8px}.line{fill:none;stroke:#39516f;stroke-width:1.6;marker-end:url(#m-arrow)}
+    @media(prefers-color-scheme:dark){.bg{fill:#101723}.panel,.node{fill:#172233;stroke:#5e7597}.band{fill:#1c2e4c}.ink{fill:#edf3ff}.muted{fill:#b6c4d9}.agent{fill:#142c49;stroke:#60a5fa}.store{fill:#2b1e45;stroke:#b794f4}.gate{fill:#143524;stroke:#69c58a}.risk{fill:#3a2916;stroke:#f0a54a}.missing{fill:#3a1d23;stroke:#fb7185}.line{stroke:#bbcae0}}
+  </style>
+  <defs><marker id="m-arrow" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7Z" fill="#39516f"/></marker></defs>
+  <rect class="bg" width="360" height="1000" rx="14"/>
+  <text class="title ink" x="20" y="34">Fiftybox: 안전한 에이전트 작업장</text>
+  <text class="t muted" x="20" y="52">Claude가 반장이고, 작업대와 게이트가 main을 보호합니다.</text>
+  <rect class="panel" x="16" y="68" width="328" height="64" rx="8"/><text class="h ink" x="28" y="89">근거 상태</text><text class="s muted" x="28" y="106">선언됨: 로컬 Claude 플러그인 + Python/Bash 하네스.</text><text class="s muted" x="28" y="120">관측됨: 실행 아티팩트, 제공자 계정, 배포 상태는 미확인.</text>
+  <rect class="panel" x="16" y="148" width="328" height="447" rx="8"/><rect class="band" x="16" y="148" width="328" height="28" rx="8"/><text class="h ink" x="28" y="167">선언된 흐름</text>
+  <rect class="node" x="35" y="194" width="290" height="50" rx="7"/><text class="h ink" x="47" y="215">개발자 → ./install.sh</text><text class="s muted" x="47" y="231">스킬/어댑터 복사, 기존 설정 보존</text>
+  <path class="line" d="M180 244V263"/>
+  <rect class="agent" x="35" y="266" width="290" height="56" rx="7"/><text class="h ink" x="47" y="288">Claude Code 슬래시 스킬</text><text class="code muted" x="47" y="307">/fiftybox-orchestration &lt;task&gt;</text>
+  <path class="line" d="M180 322V341"/>
+  <rect class="store" x="35" y="344" width="290" height="56" rx="7"/><text class="h ink" x="47" y="366">작업표 보관함 (.omx/artifacts/)</text><text class="s muted" x="47" y="384">의도, 설계, 작업 로그, 요약 JSON</text>
+  <path class="line" d="M180 400V419"/>
+  <rect class="node" x="35" y="422" width="290" height="56" rx="7"/><text class="h ink" x="47" y="444">격리된 git worktree</text><text class="s muted" x="47" y="462">작업 브랜치, 선언된 파일 소유권 확인</text>
+  <path class="line" d="M180 478V497"/>
+  <rect class="agent" x="35" y="500" width="290" height="56" rx="7"/><text class="h ink" x="47" y="522">Pi 또는 선택한 구현 레인</text><text class="s muted" x="47" y="540">탐색과 작업 편집; 실패하면 해당 단계 중단</text>
+  <path class="line" d="M180 556V575"/>
+  <rect class="gate" x="35" y="578" width="290" height="72" rx="7"/><text class="h ink" x="47" y="600">검사 → 전달</text><text class="s muted" x="47" y="618">실패 테스트 + 리뷰 게이트 → Lore 커밋 → 분리 병합 → 푸시</text><text class="s muted" x="47" y="634">테스트 실패 뒤 한 번 자동 재시도합니다.</text>
+  <text class="s muted" x="28" y="678">제공자 선택: Pi/OpenCode, Codex-write, Grok, CommandCode;</text><text class="s muted" x="28" y="692">로컬 경로는 OpenCode, Modal Qwen, NVIDIA NIM을 쓸 수 있습니다.</text>
+  <text class="s muted" x="28" y="715">근거: README, install.sh, orchestration SKILL + orchestrate.py,</text><text class="s muted" x="28" y="729">기본 제공자 설정, fiftybox-local SKILL.</text>
+  <rect class="panel" x="16" y="758" width="328" height="222" rx="8"/><rect class="band" x="16" y="758" width="328" height="28" rx="8"/><text class="h ink" x="28" y="777">평가와 다음 행동</text>
+  <text class="h ink" x="28" y="805">견고한 경계</text><text class="s muted" x="28" y="821">• 격리 worktree가 미완성 편집을 main에서 멀리 둡니다.</text><text class="s muted" x="28" y="835">• 아티팩트와 테스트/소유권/무작업 검사가 근거를 남깁니다.</text>
+  <rect class="risk" x="26" y="850" width="308" height="53" rx="6"/><text class="h ink" x="37" y="870">리스크: 근거 → 결과</text><text class="s muted" x="37" y="886">권고형 리뷰와 호스트 전역 제공자 설정이 결과를 바꿀 수 있습니다.</text>
+  <rect class="missing" x="26" y="916" width="308" height="51" rx="6"/><text class="h ink" x="37" y="936">다음: 실제 실행 증명</text><text class="s muted" x="37" y="952">dry-run 로그 보관, 모의 제공자 CI, 고위험 작업은 엄격 리뷰.</text>
+</svg>

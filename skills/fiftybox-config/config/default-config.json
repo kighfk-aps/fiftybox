@@ -17,6 +17,12 @@
         "opencode-go": {
           "models": { "deepseek-v4-flash": true }
         },
+        "macstudio-qwen38-27b": {
+          "models": { "qwen38-27b-8bit": true }
+        },
+        "macstudio-gemma4": {
+          "models": { "mlx-community--gemma-4-26B-A4B-it-qat-4bit": true }
+        },
         "modal-qwen38": {
           "models": { "qwen3.8-27b-q4_k_m": true }
         },

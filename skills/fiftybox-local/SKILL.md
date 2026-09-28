@@ -1,20 +1,19 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on local or free providers (OpenRouter free-tier via Pi CLI as top priority, opencode free-tier, Modal Qwen3.8-27B, NVIDIA NIM via Pi CLI, local on-device Gemma 4 26B-A4B via TurboFieldfare as last-resort fallback) with dynamic parallelism tied to healthy model count. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on the fixed local executor — Mac Studio Gemma4-26B-A4B QAT 4-bit (mlx-serve over Tailscale, co-resident with Qwen3.8-27B 8-bit) via Pi CLI — sequential TDD with no discovery and no model switching. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
 
-로컬·무료 provider로 구현 페이즈를 돌린다. 후보는 매 실행 실측 탐색한다 —
-무료 티어는 제공 모델과 할당량이 수시로 바뀐다.
+구현 페이즈를 맥스튜디오(Mac Studio M4 Max 128GB) mlx-serve 서버의
+Gemma4-26B-A4B(QAT 4-bit)로만 돌린다. **executor는 고정이다** — 후보 탐색,
+폴백 순서, 모델 교체가 모두 없다.
 
-**핵심 루프:** 오케스트레이터(Claude/Codex)가 실패하는 테스트 작성(Red) → provider가 통과시킴(Green) → 오케스트레이터 리뷰
+**핵심 루프:** 오케스트레이터(Claude/Codex)가 실패하는 테스트 작성(Red) → 로컬
+모델이 통과시킴(Green) → 오케스트레이터 리뷰
 
-**실행 방식:** 동적 병렬. 이번 실행에서 가용한(healthy) distinct 모델 수가
-배치의 최대 동시 실행 수다. 모델 1개면 순차, N개면 최대 N개 병렬 — 배치 내
-각 태스크는 서로 다른 모델에 배정한다(같은 모델에 태스크를 몰지 않는다 —
-무료 티어 분당 요청 제한, Modal 컨테이너 자원 경합을 피한다). 배치 크기는
-후보 모델 수와 같다.
+**실행 방식:** 순차. 모델이 하나뿐이므로 병렬 디스패치가 없다 — 태스크를 한
+줄씩, 앞 태스크의 리뷰가 끝나면 다음 태스크를 디스패치한다.
 
 ---
 
@@ -32,468 +31,184 @@ orchestrate.py가 실패하면 사용자에게 보고한다. 대신 구현하지
 ## 호출
 
 ```
-/fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
-$fiftybox-local "<작업 설명>" [--provider <id> --model <id> ...]
+/fiftybox-local "<작업 설명>"
+$fiftybox-local "<작업 설명>"
 ```
 
-`--provider`/`--model`을 명시하면 탐색을 건너뛰고 그 목록만 후보로 쓴다(수동
-모드). 생략하면 아래 후보 풀 구성대로 매번 탐색한다.
+provider/model 플래그가 없다 — executor가 고정이기 때문이다.
 
 ---
 
-## 후보 풀 구성
+## Executor (고정)
 
-**시작 전에 `~/.claude/fiftybox-config.json`을 읽는다** (`/fiftybox-config`
-스킬이 관리한다). 이 설정으로 아래 다섯 후보 원천을 켜고 끈다:
+| 항목 | 값 |
+|---|---|
+| `IMPL_AGENT`(`--implement-agent`) | `pi` |
+| `IMPL_PROVIDER`(`--provider`) | `macstudio-gemma4` |
+| `IMPL_MODEL`(`--model`) | `mlx-community--gemma-4-26B-A4B-it-qat-4bit` |
+| `IMPL_TIMEOUT`(`--implementation-timeout`) | `1800` |
 
-- `providers.pi.backends.openrouter-free`의 `models`에 켜진 모델이 하나도 없으면
-  1번(OpenRouter 무료 탐색, 최우선)을 생략한다.
-- `providers.opencode.enabled`가 `false`면 2번(opencode 무료 티어 탐색) 자체를
-  생략한다.
-- `providers.pi.backends.modal-qwen38`의 `models`에 켜진 모델이 하나도 없으면
-  3번(Modal 항상 포함)을 생략한다 — 예를 들어 지출을 잠깐 막고 싶을 때 끌 수
-  있다. `providers.pi.enabled`(Pi CLI 전체 스위치)는 이 판단에 영향을 주지
-  않는다 — Modal은 Pi CLI 구독과 무관한 별도의 pay-per-use 배포이기
-  때문이다.
-- `providers.pi.backends.nvidia-nim`의 `models`에 켜진 모델이 하나도 없으면
-  4번(NIM 항상 포함)을 생략한다.
-- `providers.pi.backends.turbofieldfare`의 `models`에 켜진 모델이 하나도 없으면
-  5번(로컬 Gemma 4 최후 폴백)을 생략한다.
+모든 디스패치(implement·재시도·deploy)에 이 네 값을 **전부** 넘긴다.
+`--implement-agent`는 에이전트 레지스트리 키(`pi`)만 받는다. `--provider`를
+빠뜨리면 기본값 `opencode-go`로 조용히 나가므로 반드시 명시한다.
 
-설정 파일이 없으면 아직 `/fiftybox-config`를 실행한 적이 없다는 뜻이니, 리포
-기본값(다섯 다 켜짐)을 그대로 쓴다.
+**백엔드 실체:** Pi `~/.pi/agent/models.json`의 `macstudio-gemma4` →
+`http://100.115.199.115:11235/v1`(맥스튜디오 Tailscale IP, mlx-serve 26.9.6).
+**인증이 없다** — `apiKey`는 더미 `EMPTY`고 Bearer 헤더 불필요. 컨텍스트
+262,144, max tokens 16,384. 같은 호스트의 11234번(Qwen3.8-27B 8-bit)은 **별도
+mlx-serve 프로세스**다 — 서로 독립이라 한쪽 재시작이 다른 쪽에 영향을 주지
+않는다. 컨텍스트가 넓어도 태스크 프롬프트와 design.md 발췌는 간결하게 유지한다.
+서버 운용 기록은 `~/Desktop/develop-a/local-model/`(모델 전환·평가 리포트).
 
-**각 후보는 (agent, provider, model) 3튜플이다.** `orchestrate.py`의
-`--implement-agent`는 에이전트 레지스트리 키(`opencode`/`pi`/`piqwen` 등)만
-받는다 — provider 이름(`nvidia-nim`, `modal-qwen38`)을 그 자리에 넣으면 setup이
-"is not in the agents list"로 하드 실패한다. `--provider`는 별개 플래그이고
-기본값이 `opencode-go`라서, 빠뜨리면 의도한 백엔드가 아니라 조용히
-`opencode-go`로 나간다. 다섯 후보 원천은 다음과 같이 고정된다:
+### 설정 게이트
 
-| 후보 원천 | `IMPL_AGENT`(`--implement-agent`) | `IMPL_PROVIDER`(`--provider`) | `IMPL_MODEL`(`--model`) |
-|---|---|---|---|
-| OpenRouter 무료 티어 (최우선) | `pi` | `openrouter-free` | 탐색된 OR 모델 (`IMPL_TIMEOUT=900`) |
-| opencode 무료 티어 | `opencode` | (전달해도 무시됨 — 템플릿이 `{provider}`를 안 씀) | 탐색된 `opencode/<모델>` |
-| Modal Qwen | `piqwen` | `modal-qwen38` | `qwen3.8-27b-q4_k_m` |
-| NVIDIA NIM | `pi` | `nvidia-nim` | config의 `nvidia-nim.models`에서 켜진 모델 |
-| 로컬 Gemma 4 (최후 폴백) | `pi` | `turbofieldfare` | `gemma-4-26b-a4b-it` |
-
-Step 5/7/9의 모든 디스패치 명령은 이 표의 세 값을 **전부** 넘겨야 한다. 하나만
-빠져도 오작동(잘못된 백엔드) 또는 하드 실패(잘못된 에이전트 이름) 중 하나로
-이어진다.
-
-**배정 순서:** 라운드에 태스크를 배정할 때는 OpenRouter 후보부터 채우고,
-남은 태스크를 나머지 레인(opencode, Modal, NIM)으로 채운다 — 병렬 구조
-자체(배치 크기 = 후보 수, 라운드 안 각 태스크는 서로 다른 모델)는 유지한다.
-
-1. (`providers.pi.backends.openrouter-free`의 `models`에 켜진 모델이 있을 때만)
-   `discover_openrouter_free.py`로 OpenRouter `:free` 무료 티어를 실측
-   탐색한다 — **1번 후보 원천(최우선)**이다. 다른 레인(opencode 무료 등)의
-   탐색 결과를 `--exclude`로 전달해 중복 모델을 제외하고, `smoke: ok`인 후보
-   전원이 `IMPL_AGENT=pi`, `IMPL_PROVIDER=openrouter-free`,
-   `IMPL_MODEL=<탐색된 OR 모델 ID>`, `IMPL_TIMEOUT=900` 후보가 된다. 이
-   후보들 사이에서도 배치 도중 하나가 막히면
-   [OpenRouter 폴백 순서](#openrouter-폴백-순서)를 따라 순차 전환한다 —
-   자세한 내용은 해당 섹션 참고.
-
-```bash
-python3 ~/.claude/skills/fiftybox-local/scripts/discover_openrouter_free.py \
-  --exclude "<다른 레인 탐색에서 나온 모델 ID들>"
-```
-
-   > 비고: `thinkingmachines/inkling:free` 등 inkling 계열 무료 변형은
-   > agentic-harness 게이트(403)로 스모크에서 `model` 분류로 제외될 수
-   > 있다 — 정상 동작이므로 오류로 취급하지 않는다.
-
-2. (`providers.opencode.enabled`가 `true`일 때만) `discover_free_models.py`로
-   opencode Zen 무료 티어를 실측 탐색한다
-   (각 후보에 실제 호출 1회 — 수십 초 걸릴 수 있다). `smoke: ok`인 것만
-   후보로 삼는다. 이 후보들 사이에서도 배치 도중 하나가 막히면
-   [opencode 폴백 순서](#opencode-폴백-순서)를 따라 순차 전환한다 — 자세한
-   내용은 해당 섹션 참고. `metadata_degraded`가 `true`면 사용자에게 먼저
-   알린다:
-
-   > opencode 모델 메타데이터를 파싱하지 못했습니다. 모델 목록만으로
-   > 진행하며 컨텍스트 크기와 툴콜 지원 여부는 확인되지 않았습니다.
-
-```bash
-python3 ~/.claude/skills/fiftybox-local/scripts/discover_free_models.py
-```
-
-3. (`providers.pi.backends.modal-qwen38`가 config에서 켜져 있을 때만)
-   **`modal-qwen38`(Qwen3.8-27B)을 탐색 없이 항상 후보 1개로 추가한다** —
-   `IMPL_AGENT=piqwen`, `IMPL_PROVIDER=modal-qwen38`,
-   `IMPL_MODEL=qwen3.8-27b-q4_k_m`, `IMPL_TIMEOUT=1800`. 콜드스타트는 있지만
-   가용성 자체는 항상 참으로 간주한다(Modal은 pay-per-use라 "무료 티어 소진"
-   개념이 없다).
-4. (`providers.pi.backends.nvidia-nim`가 config에서 켜져 있을 때만)
-   **NIM을 탐색 없이 항상 후보 1개로 추가한다** — `IMPL_AGENT=pi`,
-   `IMPL_PROVIDER=nvidia-nim`, `IMPL_MODEL=<config의 `nvidia-nim.models`에서
-   켜진 첫 모델, JSON 키 순서 기준>`, `IMPL_TIMEOUT=600`. 이 후보 1개는
-   내부적으로 [NIM 폴백 순서](#nim-폴백-순서)를 따라 순차 재시도한다 — 자세한
-   내용은 해당 섹션 참고.
-5. 1~4번 후보가 **하나도 없을 때만**, (`providers.pi.backends.turbofieldfare`가
-   config에서 켜져 있으면) 로컬 Gemma 4를 최후의 후보 1개로 추가한다 —
-   `IMPL_AGENT=pi`, `IMPL_PROVIDER=turbofieldfare`,
-   `IMPL_MODEL=gemma-4-26b-a4b-it`, `IMPL_TIMEOUT=86400`. 다른 후보가 하나라도
-   있으면 이 후보는 절대 배치에 섞이지 않는다 — 매우 느리고 서버 특성상
-   병렬도 1로만 돈다. 자세한 절차는
-   [로컬 Gemma 4 최후 폴백](#로컬-gemma-4-최후-폴백) 참고. 디스패치 전
-   반드시 사용자에게 알린다:
-
-   > 다른 후보가 모두 막혔습니다. 로컬 Gemma 4로 진행할까요? 태스크 1개에
-   > 수 시간이 걸리고, 그동안 이 맥이 계속 바쁘며 다른 fiftybox 실행이
-   > 막힙니다.
-
-6. `smoke: ok` 후보(설정에서 켜진 openrouter-free + opencode 무료 + modal-qwen38 +
-   nvidia-nim + turbofieldfare)가 하나도 없으면 중단하고 보고한다.
-   **유료 모델로 임의 전환하지 않는다.** config에서 다섯 다 껐다면
-   `/fiftybox-config`로 최소 하나는 켜야 한다고 안내한다.
-
-수동 모드(`--provider`/`--model` 직접 지정)에서는 이 탐색 전체를 건너뛰고
-지정된 provider/model 쌍들을 그대로 후보로 쓴다.
+시작 전에 `~/.claude/fiftybox-config.json`을 읽는다(`/fiftybox-config` 스킬이
+관리한다). `providers.pi.backends.macstudio-gemma4.models`의
+`mlx-community--gemma-4-26B-A4B-it-qat-4bit`이 꺼져 있으면 중단하고
+`/fiftybox-config`로 켜라고 안내한다. config 파일이 없으면 기본값(켜짐)으로
+진행한다.
 
 ---
 
-## Modal Qwen 웨이크업 절차
+## 맥스튜디오 서버 preflight
 
-`modal-qwen38`이 이번 배치에 포함될 때만 그 레인 앞에 적용한다. 다른 레인의
-진행을 막지 않는다 — 독립 detached 프로세스이므로.
+11235번 mlx-serve는 Gemma4-26B-A4B를 단독 서빙하는 **launchd 관리 상시
+서버**다. 배치 디스패치, 실패 재시도, Phase 7b deploy — **디스패치 앞에
+매번** 아래 1번 헬스체크를 한다. `200`이면 나머지 단계는 건너뛴다(웜업은
+실행당 1회).
 
-Modal serverless(ap-south)는 유휴 시 컨테이너가 0으로 스케일된다. 배치
-implement 디스패치, fix 재시도, Phase 6 auto-retry, Phase 7b deploy — **매
-디스패치 전에** 웨이크업한다:
+1. **헬스체크(인증 없음):**
 
 ```bash
-nohup bash -c '
-  token="$(security find-generic-password -a "$USER" -s pi-modal-qwen38-proxy-token -w)" || exit 1
-  curl --silent --output /dev/null --write-out "%{http_code}" \
-    --connect-timeout 15 --max-time 900 --retry 8 --retry-all-errors --retry-delay 2 --fail \
-    -H "Authorization: Bearer $token" \
-    https://kighfk--modal-qwen38-27b-serve.ap-south.modal.run/v1/models
-' > "<artifactDir>/modal-wake-<N>.out" 2>&1 &
+curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+  http://100.115.199.115:11235/v1/models
 ```
 
-**정확히 세 번**, t+75초/t+120초/t+150초에 확인한다(루프로 폴링하지 않는다).
-쉘 명령 타임아웃은 최소 180초로 잡는다:
+- `200` → 서버·모델 정상. 이번 실행에서 웜업(5번)을 아직 안 했으면 5번만
+  한다.
+- 연결 실패 → 2번으로 간다.
+
+2. **`200`이 아니면 스튜디오 상태 확인(SSH):**
 
 ```bash
-wake="<artifactDir>/modal-wake-<N>.out"
-elapsed=0
-for extra in 75 45 30; do
-  sleep "$extra"
-  elapsed=$((elapsed + extra))
-  code="$(tr -d '[:space:]' < "$wake" 2>/dev/null || true)"
-  echo "wake-check t+${elapsed}s: ${code:-<empty>}"
+ssh -o BatchMode=yes -o ConnectTimeout=10 tanpapa@100.115.199.115 \
+  'source ~/.zprofile 2>/dev/null; echo ---11235---;
+   lsof -nP -iTCP:11235 -sTCP:LISTEN; echo ---11234---;
+   lsof -nP -iTCP:11234 -sTCP:LISTEN; echo ---8000---;
+   lsof -nP -iTCP:8000 -sTCP:LISTEN'
+```
+
+- SSH 실패 → 스튜디오가 꺼져 있거나 오프라인. 중단하고 보고한다.
+- **8000번(oMLX)이 LISTEN이면 경고만 한다** — oMLX는 휴면 중이어야 정상이며,
+  떠 있으면 Flash/Q4까지 메모리를 잡아 11235와 경합한다. 사용자에게 알리고
+  임의로 끄지 않는다.
+- 11234번은 8bit 상주 레인(정상 상태). 끄지 않는다.
+- 11235번이 LISTEN인데 1번 체크가 실패하면 로그 확인:
+  `ssh tanpapa@100.115.199.115 'tail -20 ~/mlx-serve-gemma4.log'`
+
+3. **서버 기동(11235번이 죽어 있을 때만):** launchd로 관리된다.
+
+```bash
+ssh -o BatchMode=yes tanpapa@100.115.199.115 \
+  'launchctl kickstart -k gui/$(id -u)/com.tanpapa.mlx-gemma4'
+```
+
+플레인이 없으면 수동 기동(**`source ~/.zprofile`을 빼면 non-interactive
+SSH에서 mlx-serve를 못 찾는다**):
+
+```bash
+ssh -o BatchMode=yes tanpapa@100.115.199.115 \
+  'source ~/.zprofile; nohup mlx-serve --model ~/.omlx/models/mlx-community--gemma-4-26B-A4B-it-qat-4bit --serve --host 100.115.199.115 --port 11235 --ctx-size 262144 >> ~/mlx-serve-gemma4.log 2>&1 &'
+```
+
+이 스킬이 서버를 새로 띄웠는지 기록해 둔다.
+
+4. **폴링:** 30초 간격으로 최대 16회(8분). 로그는
+`ssh tanpapa@100.115.199.115 'tail -20 ~/mlx-serve-gemma4.log'`로 본다.
+
+```bash
+for i in $(seq 1 16); do
+  sleep 30
+  code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
+    http://100.115.199.115:11235/v1/models || true)"
+  echo "boot-check $((i*30))s: ${code:-<empty>}"
   if [ "$code" = "200" ]; then echo READY; break; fi
 done
 ```
 
-`200`이 나오면 즉시 디스패치한다(남은 체크를 기다리지 않는다). 세 번째
-체크 후에도 `200`이 아니면 디스패치하지 않고 보고한다 — [실패 처리](#실패-처리)
-기준으로 토큰/Keychain 문제는 `auth`, 그 외는 `unknown`으로 분류한다. 모델
-교체를 제안하지 않는다(Modal은 provider가 하나뿐이라 교체할 다음 모델이
-없다).
+8분 안에 `200`이 아니면 디스패치하지 않고 `server`로 분류해 보고한다.
+모델 교체를 제안하지 않는다 — executor가 하나뿐이다.
 
-`--phase implement`/`--phase deploy` 호출에 `--implement-agent piqwen
---provider modal-qwen38 --implementation-timeout 1800`을 **셋 다** 추가한다.
-`--provider`를 빠뜨리면 웨이크업한 Modal 엔드포인트가 아니라 기본값
-`opencode-go`로 조용히 나간다. `--phase setup`에도 [Step 2](#step-2-setup-phase-0)의
-규칙대로 `--implement-agent piqwen --provider modal-qwen38`을 넘긴다.
+5. **Gemma4 웜업(실행당 1회):** 모델은 서버 기동 시 로드되므로 lazy-load
+   대기는 필요 없다. 첫 디스패치 직전 생성 경로 확인을 1회만:
 
----
+```bash
+curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"mlx-community--gemma-4-26B-A4B-it-qat-4bit","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+  http://100.115.199.115:11235/v1/chat/completions
+```
 
-## OpenRouter 폴백 순서
-
-OpenRouter 후보는 매 실행 `discover_openrouter_free.py`가 실측한 healthy
-`:free` 모델 목록이며, 선호 순위는 config
-`providers.pi.backends.openrouter-free.models`의 JSON 키 순서를 그대로 따른다 —
-리포 기본값은:
-
-1. `z-ai/glm-5.2:free`
-2. `poolside/laguna-s-2.1:free`
-3. `thinkingmachines/inkling:free`
-4. `thinkingmachines/inkling-small:free`
-5. `cohere/north-mini-code:free`
-
-**비고:** inkling 계열 무료 변형은 agentic-harness 게이트(403)로 스모크에서
-`model` 분류로 제외될 수 있다 — 정상 동작이므로 오류로 취급하지 않는다.
-
-**발동 조건**은 [실패 처리](#실패-처리)의 `model`/`model_busy` 분류일 때만이다.
-`upstream_provider_shared_pool`(`limit_source` 문구)가 붙은 429와
-503·`overloaded`는 모델 단위 일시 혼잡이므로 `model_busy`로 분류하고 다음
-후보로 넘어간다. 반면 문구 없는 순수 429는 계정 단위 한도(무료 레인 소진)이므로
-`window`로 분류한다 — 모델을 바꿔봤자 소용없다. 탐색 결과의 `window_exhausted`
-신호도 OpenRouter 레인 전체 소진으로 취급한다.
-
-**절차 (`model`/`model_busy`일 때만):**
-1. 실패한 태스크를 선호 순위상 **다음 healthy OR 모델**로 재디스패치한다
-   (`IMPL_AGENT=pi`, `IMPL_PROVIDER=openrouter-free`, `IMPL_MODEL=<다음 모델>`,
-   `IMPL_TIMEOUT=900` — 나머지 인자는 동일). 이 전환은
-   [안전 계약](#안전-계약)의 "자동 재시도는 태스크당 1회만"과 별개다 — OR
-   목록 소진 전까지는 provider 내부 전환이지 재시도가 아니다.
-2. 목록의 모든 모델을 다 소진하면, 그때 OpenRouter 레인 전체를 "소진"으로
-   처리하고 [모델 소진 처리](#모델-소진-처리) 절차로 넘어간다.
-3. 어느 단계에서 전환했든 `<artifactDir>/model-choice.json`의 `history`에
-   `{"from": "openrouter-free/<이전 모델>", "to": "openrouter-free/<다음 모델>" 또는
-   "<다른 provider>", "reason": "model" | "model_busy" | "window"}`을
-   append한다.
-
-형제 레인(opencode 후보, modal-qwen38, nvidia-nim)은 이 전환 동안 영향받지
-않고 계속 진행한다.
-
----
-
-## NIM 폴백 순서
-
-`nvidia-nim` 후보 하나에는 실제로 모델 여러 개가 묶여 있다. 순서는
-`providers.pi.backends.nvidia-nim.models`의 JSON 키 순서(=`/fiftybox-config`
-TUI에서 조정 가능)를 그대로 따른다 — 리포 기본값은:
-
-1. `minimaxai/minimax-m3` — 2026-09-04 실측 1초 응답, 1순위
-2. `poolside/laguna-xs-2.1` — 2026-09-04 실측 2초 응답
-3. `moonshotai/kimi-k3` — 2026-09-04 실측 120초 이상 무응답(타임아웃). 살아있을 때도 있어
-   목록엔 남기되 맨 뒤로 뺐다
-
-> 2026-09-04 실측: `openai/gpt-oss-120b`는 HTTP 410(배포 중단)으로 응답한다.
-> NVIDIA가 복구하면 `/fiftybox-config`에서 다시 켤 수 있다.
-
-**⚠️ NIM의 40 RPM과 무료 크레딧은 계정 단위 풀이다.** [실패 처리](#실패-처리)
-분류표에서 `window`/`credit`/`auth`로 분류되는 신호(429·rate limit·크레딧
-소진·인증 실패)는 계정 전체가 막힌 것이라 **목록의 다음 모델로 넘어가도
-풀리지 않는다.** 이 경우 목록을 순회하지 말고 곧장 NIM lane 전체를 "소진"으로
-처리하고 [모델 소진 처리](#모델-소진-처리)로 넘어간다.
-
-**목록을 순서대로 재시도하는 경우는 `model` 분류(그 모델만 배포 중단·교체·거부)
-일 때뿐이다:**
-1. 실패한 태스크를 목록의 **다음 모델**로 재디스패치한다
-   (`IMPL_PROVIDER=nvidia-nim`, `IMPL_MODEL=<다음 모델>`는 그대로, 나머지
-   인자는 동일). 이 전환은 [안전 계약](#안전-계약)의 "자동 재시도는 태스크당
-   1회만"과 별개다 — NIM 리스트 소진 전까지는 provider 내부 전환이지
-   재시도가 아니다.
-2. 목록의 모든 모델을 `model` 분류로 다 소진하면, 그때 NIM lane 전체를
-   "소진"으로 처리하고 [모델 소진 처리](#모델-소진-처리) 절차로 넘어간다.
-3. 어느 단계에서 전환했든 `<artifactDir>/model-choice.json`의 `history`에
-   `{"from": "nvidia-nim/<이전 모델>", "to": "nvidia-nim/<다음 모델>" 또는
-   "<다른 provider>", "reason": "model" | "window" | "credit" | "auth" |
-   "timeout"}`을 append한다.
-
-형제 레인(openrouter-free 후보, opencode 후보, modal-qwen38)은 이 전환 동안
-영향받지 않고 계속 진행한다.
-
----
-
-## opencode 폴백 순서
-
-opencode 후보는 매 실행 `discover_free_models.py`가 실측한 healthy 모델
-목록이다. 스모크 테스트를 통과했더라도 무료 티어 한도는 실행 도중에도
-소진되거나 배포가 바뀔 수 있다.
-
-**한계를 먼저 밝힌다.** 이 스킬의 핵심 원칙은 "배치 크기 = 후보 수, 라운드
-안 각 태스크는 서로 다른 모델"이다(`:13-17`). 그래서 **꽉 찬 라운드에서는
-opencode 후보가 이미 전부 사용 중이라 넘어갈 데가 없다.** 이 폴백은 라운드가
-후보 수보다 작을 때(마지막 라운드, 태스크가 적을 때)만 실질적으로 의미가
-있다. 갈 곳이 없을 때는 3번의 보류(defer) 규칙을 따른다 — 조용히 레인
-소진으로 떨어뜨리지 않는다.
-
-**발동 조건**은 [실패 처리](#실패-처리)의 `model`/`model_busy` 분류일 때만이다.
-opencode 무료 티어의 한도는 모델별이 아니라 계정 단위인 경우가 많으므로,
-문구 없는 순수 429는 `window`로 분류하고 다음 모델로 옮기지 않는다 — 곧장
-opencode 레인 전체를 소진 처리한다.
-
-**절차 (`model`/`model_busy`일 때만):**
-1. 막힌 모델을 이번 실행의 차단 목록에 넣는다([모델 소진 처리](#모델-소진-처리)
-   참고). 재탐색에서 다시 `smoke: ok`로 나와도 이번 실행 동안은 재배정하지
-   않는다.
-2. 정렬 순서(`sort_candidates` 결과: smoke: ok 우선, 그다음 context
-   내림차순)상 다음 opencode 후보 중 **차단 목록에 없고 이번 라운드의 다른
-   태스크가 쓰고 있지 않은** 모델로 재디스패치한다.
-3. 그런 모델이 없으면: 이번 라운드에 아직 배정되지 않은 다른 lane(OpenRouter,
-   Modal, NIM)이 비어 있으면 그쪽으로 재배정한다. 그것도 없으면 이 태스크를 **다음
-   라운드로 미룬다(defer)** — 형제 태스크가 끝나면 모델이 비므로, 다음
-   라운드 시작 시 차단 목록에 없는 healthy opencode 모델에 재배정할 수 있다.
-   "같은 모델에 태스크를 몰지 않는다"는 원칙은 *동시* 실행에 대한 것이라
-   라운드를 넘긴 재사용은 위반이 아니다. 남은 라운드가 없거나 보류가 반복되면
-   그때 opencode 레인 전체를 "소진"으로 처리하고 [모델 소진
-   처리](#모델-소진-처리)로 넘어간다.
-4. 전환할 때마다 `<artifactDir>/model-choice.json`의 `history`에
-   `{"from": "opencode/<이전 모델>", "to": "opencode/<다음 모델>" 또는
-   "<다른 provider>" 또는 "deferred", "reason": "model" | "model_busy" |
-   "window"}`을 append한다.
-
-형제 레인(openrouter-free, modal-qwen38, nvidia-nim)은 이 전환 동안 영향받지 않고
-계속 진행한다.
-
----
-
-## 로컬 Gemma 4 최후 폴백
-
-`turbofieldfare`(로컬 Gemma 4 26B-A4B IT)는 1~4번 후보가 **하나도 남지
-않았을 때만** 쓰는 최후의 후보다. 다른 후보와 절대 같은 배치에 섞이지
-않는다 — 이 레인이 선택되면 그 라운드는 항상 배치 크기 1, 순차 실행이다
-(서버가 프로세스 1개·모델 1개라 병렬이 불가능하다).
-
-**속도에 대한 솔직한 기대치.** 실측(`server.log`)으로 6,195토큰 프롬프트를
-읽는 데만 213초 걸렸다. 구현 태스크 1개에 수 시간을 각오해야 한다. 그동안
-이 맥은 계속 바쁘고, worktree·브랜치·`orchestrate` 락이 잡혀 있어 다른
-fiftybox 실행이 막힌다. 품질도 무료 원격 모델보다 낮을 수 있다(활성
-파라미터 ~3.9B, 4-bit) — [리뷰 게이트](#step-6-오케스트레이터-리뷰-게이트)를
-절대 생략하지 않는다.
-
-**`--auto-resume`을 절대 붙이지 않는다.** watcher 데몬의 TTL이 6시간이라
-(`orchestrate_watcher.py` 기본값), 24시간짜리 이 레인을 중간에 죽인다.
-
-### 서버 preflight (디스패치 전 매번)
-
-1. **이미 떠 있나 확인:**
-   ```bash
-   curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health
-   ```
-   `200`이면 바로 디스패치로 넘어간다.
-
-2. **아니면 충돌 프로세스부터 확인:**
-   ```bash
-   pgrep -fl 'TurboFieldfareServer|TurboFieldfareMac|TurboFieldfareDecodeService|TurboFieldfareCLI'
-   ```
-   이미 다른 프로세스가 모델을 물고 있으면 새로 띄우지 않는다.
-
-3. **detached로 기동한다** (모델 로드가 포트 오픈보다 먼저 끝난다 — 늦게 열림은
-   정상이다). `--max-context 65536`은 **반드시** 명시한다(서버 기본값은
-   16384다):
-   ```bash
-   nohup bash -c '
-   cd /Users/tanpapa/Desktop/develop-a/local-model/turbo-fieldfare
-   .build/release/TurboFieldfareServer \
-     --model scratch/gemma4.gturbo --port 8080 --max-context 65536
-   ' > "<artifactDir>/turbofieldfare-server.log" 2>&1 &
-   ```
-   이 스킬이 새로 띄웠는지 기록해 둔다(원래 떠 있던 서버였으면 Step 10에서
-   건드리지 않는다).
-
-4. **폴링**: 30초 간격으로 `/health`를 최대 16회(8분) 확인한다.
-   ```bash
-   for i in $(seq 1 16); do
-     sleep 30
-     code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/health || true)"
-     echo "boot-check $((i*30))s: ${code:-<empty>}"
-     if [ "$code" = "200" ]; then echo READY; break; fi
-   done
-   ```
-   8분 안에 `200`이 안 나오면 디스패치하지 않고 `unknown`으로 분류해 보고한다.
-   모델 스왑을 제안하지 않는다(provider가 하나뿐이다).
-
-### 디스패치
-
-`--implement-agent pi --provider turbofieldfare --model gemma-4-26b-a4b-it
---implementation-timeout 86400`을 **셋 다 + 타임아웃까지** 붙인다.
-`--provider`를 빠뜨리면 기본값 `opencode-go`로 조용히 나간다.
-
-### 폴링 간격 예외
-
-다른 레인은 30~60초 간격으로 `.out`을 확인하지만, 이 레인은 최대 24시간
-걸리므로 **10분 간격**으로 확인한다. 살아있는지 보려면
-`turbofieldfare-server.log`의 `generating`/`completed` 줄이 계속 갱신되는지
-같이 본다.
-
-### 실패 시
-
-- `EXIT_CODE=124`(24시간 초과)는 재시도하지 않는다 — 다시 돌려도 또 24시간
-  걸린다. 사용자에게 보고하고 선택지를 묻는다.
-- 그 외 실패도 [Step 7의 1회 자동 재시도](#step-7-review--test-phase-6)를
-  적용하지 **않는다** — 사용자에게 먼저 묻는다. 후보가 이거 하나뿐이라
-  재시도해도 결과가 크게 다르지 않을 가능성이 높다.
-- 서버 preflight가 8분 안에 실패하면 `unknown`으로 분류하고, 이 레인도
-  막혔다는 뜻이므로 [후보 풀 구성](#후보-풀-구성) 6번 규칙대로 전체 중단
-  보고로 넘어간다.
+`200`이면 READY. 타임아웃 시 30초 뒤 한 번 더 한다. 두 번째까지 실패하면
+`server`로 분류한다.
 
 ---
 
 ## 실패 처리
 
-`orchestrate.py`는 구현 경로에 실패 분류 필드를 만들지 않는다.
-`classify_codex_error`/`CODEX_API_ERROR_PATTERNS`는 존재하지만 Codex 리뷰
-경로 전용이고 `phase_implement`에서 호출되지 않는다. HTTP 429와 진짜 구현
-실패를 프로그램적으로 구분할 방법이 없다 — 로그를 직접 읽어야 한다. 아래
-표로만 분류하고, **표에 없는 근거로 임의로 모델을 바꾸지 않는다.**
+`orchestrate.py`는 구현 경로에 실패 분류 필드를 만들지 않는다. 로그를 직접
+읽어 아래 표로만 분류한다.
 
 ### 근거 파일
 
-| 근거 | 신뢰도 | 비고 |
-|---|---|---|
-| `<artifactDir>/implement-task-N.out`의 `EXIT_CODE=` 줄 | **높음 — 유일한 레인별 근거** | Step 5의 디스패치 래퍼가 남긴다 |
-| `.out` 본문의 provider CLI 원문 | 높음 | 429·모델 거부 문구는 여기서만 보인다 |
-| `<artifactDir>/summary.json` | **쓰지 않는다** | 이 스킬은 `task-batches.md`에 JSON 블록을 안 쓰므로 모든 레인이 orchestrate.py의 단일 호출 경로를 타고, **같은 `summary.json`을 동시에 read-modify-write한다.** 마지막에 끝난 레인이 덮어써서 레인별 판단 근거가 못 된다 |
-| `<artifactDir>/implement-log.md` | **쓰지 않는다** | 같은 이유로 레인끼리 충돌한다 |
-
-> 워크트리도 형제 레인과 공유하므로 `changedFiles`/`no_changes` 판정은 형제의
-> 변경에 오염될 수 있다. 실제 성공 여부는 Step 6의 테스트 실행으로 다시
-> 확인한다.
+| 근거 | 신호 |
+|---|---|
+| `<artifactDir>/implement-task-N.out`의 `EXIT_CODE=` 줄 | Step 5 디스패치 래퍼가 남긴다 |
+| `.out` 본문의 provider CLI 원문 | 연결 오류·모델 거부 문구는 여기서만 보인다 |
 
 ### 분류표
 
-| 로그 신호 | 분류 | 범위 |
-|---|---|---|
-| `Not authenticated`, 401, Keychain 조회 실패 | `auth` | 계정 |
-| `insufficient credit`, `balance`, 402, `quota exceeded` | `credit` | 계정 |
-| 문구 없는 순수 429, `rate limit`, `usage limit`, `daily`, `weekly` | `window` | 계정 |
-| `Unknown model`, 404, **410**, 모델 ID 거부, `deprecated` | `model` | 모델 |
-| `upstream_provider_shared_pool`(`limit_source` 문구) 429, 503, `overloaded`, `capacity`, `queue full` | `model_busy` | 모델 |
-| `EXIT_CODE=124` | `timeout` | 태스크 |
-| `EXIT_CODE=3` (변경 파일 없음) | `no_changes` | 태스크 |
-| `EXIT_CODE=1` + `not in the agents list`, `unrecognized arguments`, 소유권 위반 | `orchestrate` | 스킬/설정 버그 |
-| 그 외 | `unknown` | 태스크 |
+| 로그 신호 | 분류 |
+|---|---|
+| `Connection refused`, `Failed to connect`, 요청 중 EOF·502 | `server` |
+| `Unknown model`, 404, 410, 모델 ID 거부 | `model` |
+| `EXIT_CODE=124` | `timeout` |
+| `EXIT_CODE=3` (변경 파일 없음) | `no_changes` |
+| `EXIT_CODE=1` + `not in the agents list`, `unrecognized arguments` | `orchestrate` |
+| 그 외 | `unknown` |
 
-### 범위별 대응
+### 대응
 
-**계정 단위(`auth`·`window`·`credit`) — 그 provider 레인 전체를 즉시 소진
-처리한다.** 같은 레인의 남은 태스크를 새로 디스패치하지 않는다(이미 돌고
-있는 프로세스는 죽이지 않고 결과만 받는다). **모델 교체를 해결책으로
-제시하지 않는다** — 한도는 계정 단위 풀이므로 다음 모델도 같은 이유로
-막힌다.
-- `auth` — 해당 provider의 로그인/토큰을 안내한다(Modal은 Keychain의
-  `pi-modal-qwen38-proxy-token`)
-- `window` — 리셋 대기 또는 중단을 사용자에게 묻는다
-- `credit` — 충전이 필요함을 명시한다
+**executor가 하나뿐이므로 모델·provider 교체는 어떤 분류에서도 선택지가
+아니다. 유료 모델·원격 무료 모델로 전환하지 않는다.**
 
-**형제 레인은 영향받지 않고 계속 진행한다** — NIM이 계정 단위로 막혀도
-Modal·opencode는 그대로 돈다. 모든 레인이 막혔을 때만 전체를 중단하고
-보고한다.
+- `server` → [preflight](#맥스튜디오-서버-preflight)부터 다시 실행(재기동
+  포함) 후 같은 3축으로 1회 재시도한다.
+- `timeout` → 헬스체크로 서버가 살아있는지 확인한 뒤
+  `--implementation-timeout`을 3600으로 올려 1회 재시도한다.
+- `no_changes` → 같은 3축으로 1회 재시도한다. 반복되면 프롬프트 문제로
+  보고한다.
+- `model` → `~/.pi/agent/models.json`의 백엔드 정의와 서버의 실제 모델 id가
+  갈라진 것이다. 확인은 preflight 1번과 같은 curl로 `/v1/models`를 본다.
+  스킬/설정 버그로 보고한다.
+- `orchestrate` — 스킬/설정 버그다. 파이프라인을 멈추고 보고한다.
+- `unknown` — 로그 원문과 함께 사용자에게 보고한다.
 
-**모델 단위(`model`·`model_busy`) — 그 모델만 차단 목록에 넣고 같은 레인의
-다음 모델로 스왑한다.** 절차는 [OpenRouter 폴백 순서](#openrouter-폴백-순서) /
-[NIM 폴백 순서](#nim-폴백-순서) /
-[opencode 폴백 순서](#opencode-폴백-순서)를 따른다.
-
-**태스크 국소(`timeout`·`no_changes`·`unknown`) — 모델을 바꾸지 않는다.**
-- `timeout` — Modal이면 웨이크업을 다시 확인, 아니면
-  `--implementation-timeout` 상향 후 1회 재시도. **단 turbofieldfare(로컬
-  Gemma 4) 레인은 예외다** — 24시간을 이미 다 쓴 것이므로 재시도하지 않고
-  사용자에게 보고한다([로컬 Gemma 4 최후 폴백](#로컬-gemma-4-최후-폴백) 참고)
-- `no_changes` — 모델이 지시를 무시했거나 프롬프트가 부실하다는 신호. 같은
-  3축으로 재시도하고, 반복되면 모델 단위로 취급해 다음 모델로 넘긴다
-- `unknown` — 로그 원문과 함께 사용자에게 보고한다. 임의로 모델을 바꾸지 않는다
-
-**`orchestrate` — 스킬/설정 버그다.** 파이프라인을 멈추고 그대로 보고한다.
-흔한 원인: `--implement-agent`에 provider 이름(`nvidia-nim` 등)을 잘못 넣음,
-`~/.claude/skills/orchestrate/config.json` 유실로 `piqwen` 미정의.
+**자동 재시도는 태스크당 1회만.** 재시도까지 실패하면 사용자에게 선택지를
+제시한다. 어떤 실패에서도 오케스트레이터가 대신 구현하는 것은 금지다.
 
 ### Failure Report Format
 
 ```markdown
-**Round N, Task M 실패**
+**Task N 실패**
 
-**레인:** <agent>/<provider>/<model>
-**분류:** <auth | window | credit | model | model_busy | timeout | no_changes | orchestrate | unknown>
-**범위:** <계정 | 모델 | 태스크 | 스킬 버그>
+**레인:** pi/macstudio-gemma4/mlx-community--gemma-4-26B-A4B-it-qat-4bit
+**분류:** <server | model | timeout | no_changes | orchestrate | unknown>
 **근거:** <.out 로그에서 인용한 줄 + EXIT_CODE>
-**영향:** <이 레인 / 형제 레인에 미치는 영향>
-
 **추천 행동:**
 1. <선택지 1>
 2. <선택지 2>
 ```
-
-어떤 실패에서도 오케스트레이터가 대신 구현하는 것은 금지다.
 
 ---
 
@@ -513,130 +228,66 @@ Modal·opencode는 그대로 돈다. 모든 레인이 막혔을 때만 전체를
 
 ### Step 2: Setup (Phase 0)
 
-setup은 **이번 실행 후보 풀에 실제로 포함된 distinct `IMPL_AGENT` 값마다** 한
-번씩 검증한다. 예: 후보가 opencode 2개 + modal-qwen38 + nvidia-nim이면 distinct
-에이전트는 `opencode`, `piqwen`, `pi` 세 개다. Modal이 config에서 꺼져 있어
-이번 후보 풀에 없다면 `piqwen`을 검증하지 않는다.
-
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase setup --task "<작업>" --cwd "$(pwd)" \
-  --implement-agent "<후보 풀의 distinct 에이전트 중 하나>" \
-  --provider "<그 에이전트가 쓸 IMPL_PROVIDER>"
+  --implement-agent pi --provider macstudio-gemma4
 ```
 
-여러 개면 순서대로 반복 호출한다(각 호출은 독립적으로 성공/실패한다).
+setup은 에이전트 레지스트리 키(`pi`)와 `pi --list-models
+macstudio-gemma4` preflight를 검증한다. JSON 출력에서 `artifactDir`과
+`worktree`를 챙긴다. 설계 문서를 복사하고 고정 3축을
+`<artifactDir>/model-choice.json`에 기록한다(감사 로그 — 이번 실행 내내 이
+한 줄뿐이며 교체는 일어나지 않는다).
 
-**setup이 확인하는 것 두 가지:**
-1. `--implement-agent` 값이 에이전트 레지스트리(`~/.claude/skills/orchestrate/config.json`
-   + 빌트인)의 키인지 — 아니면 exit 1. 자격증명이나 모델 가용성은 보지
-   않는다. 바이너리 존재 여부는 경고만 하고 실패시키지 않는다.
-2. **`pi --list-models <provider>`가 항상 돈다.** `explore_agent`가
-   `--explore-agent` 같은 override 플래그 없이 기본값 `pi`로 고정돼 있어서,
-   `--implement-agent`로 뭘 넘기든 `"pi"`가 검증 대상 집합에 항상 포함되기
-   때문이다. 이 검사는 `--provider`(생략 시 기본값 `opencode-go`)가 실제
-   Pi 백엔드 목록에 있는지 본다 — 없으면 exit 1. **그래서 `--provider`를
-   반드시 넘겨야 진짜 preflight가 된다.** 생략하면 이번 실행에 안 쓸
-   `opencode-go`만 검증하고 정작 쓸 `openrouter-free`/`nvidia-nim`/`modal-qwen38`은
-   확인 없이 지나간다.
+### Step 3: 태스크 분해 (순차)
 
-Pi 백엔드 후보가 둘(openrouter-free + nvidia-nim 등) 이상이면 한 번의 setup
-호출로는 하나만 검증된다. 나머지는 검증되지 않은 채 남고, 문제가 있으면 Step 5에서
-[실패 처리](#실패-처리)의 `orchestrate`/`model`로 드러난다.
-
-JSON 출력에서 `artifactDir`과 `worktree`를 챙긴다. 설계 문서를 복사하고
-후보 풀을 `<artifactDir>/model-choice.json`에 3축(agent/provider/model)으로
-기록한다(이 파일은 orchestrate.py가 읽거나 쓰지 않는 순수 수기 감사 로그다 —
-[모델 소진 처리](#모델-소진-처리) 참고).
-
-### Step 3: 태스크 분해 (동적 병렬)
-
-설계를 원자적 구현 단위로 쪼갠다. 배치 크기가 후보 모델 수에 좌우되므로
-**배치 단위**로 만든다. 라운드 안 각 태스크는 서로 다른 모델에 배정한다:
+설계를 원자적 구현 단위로 쪼개 순차 목록으로 만든다:
 
 ```markdown
-## Task Batches (동적 병렬 — 후보 3개 기준 예시)
+## Tasks (순차 — executor 1개 고정)
 
-### Round 1 (최대 3개 병렬, 서로 다른 모델)
-- Task A → agent=opencode, provider=(무시됨), model=opencode/nemotron-3-ultra-free
-- Task B → agent=opencode, provider=(무시됨), model=opencode/mimo-v2.5-free
-- Task C → agent=piqwen, provider=modal-qwen38, model=qwen3.8-27b-q4_k_m
-
-### Round 2 (남은 태스크, 다시 최대 3개 병렬)
-- Task D → agent=opencode, provider=(무시됨), model=opencode/nemotron-3-ultra-free
+1. Task A → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
+2. Task B → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
 ```
 
 **`<artifactDir>/task-batches.md`에 ```json 태스크 블록을 넣지 않는다.** 넣으면
-orchestrate.py가 각 호출을 순차 다중 태스크 모드로 처리해서, 병렬로 뜬 레인
-각각이 전체 태스크 목록을 통째로 실행하게 된다 — 같은 워크트리를 N중으로
-겹쳐 쓴다. 자세한 이유는 [실패 처리](#실패-처리)의 근거 파일 절 참고.
+orchestrate.py가 다중 태스크 모드로 처리한다. 호출 1회 = 태스크 1개다.
 
 ### Step 4: 오케스트레이터가 테스트 작성 (Red)
 
-라운드의 각 태스크에 대해 Claude/Codex 오케스트레이터가 실패하는 테스트를 쓴다.
+이번 태스크 하나에 대해 실패하는 테스트를 쓴다. `<artifactDir>/tests/`와
+실제 프로젝트 테스트 디렉터리 양쪽에 쓴다.
 
-`<artifactDir>/tests/`와 실제 프로젝트 테스트 디렉터리 양쪽에 쓴다.
-
-**실패하는지 확인한다(Red):**
-
-```bash
-<프로젝트 테스트 명령> <테스트 파일>
-```
-
+**실패하는지 확인한다(Red):** `<프로젝트 테스트 명령> <테스트 파일>`.
 구현 전에 통과하면 다시 쓴다.
 
-### Step 5: 구현 (Green) — 라운드 병렬
+### Step 5: 구현 (Green)
 
-라운드 내 각 태스크를 배정된 (agent, provider, model) 3튜플로 동시에
-디스패치한다. `modal-qwen38`이 배정된 레인은 디스패치 전 웨이크업 절차를
-거친다. `turbofieldfare`(로컬 Gemma 4)가 배정된 라운드는 배치 크기가 항상
-1이고, 디스패치 전 [서버 preflight](#로컬-gemma-4-최후-폴백)를 거친다.
+[preflight](#맥스튜디오-서버-preflight)가 `200`인지 확인한 뒤 디스패치한다.
 
 **foreground 실행 금지.** `--phase implement`를 foreground로 돌리면 Bash 도구의
-10분 한도를 넘겨 파일도 로그도 없이 통째로 죽는다. 반드시 detached로 돌린다.
-
-**`<artifactDir>`은 모든 레인이 공유한다.** `task-batches.md`에 ```json
-블록을 넣지 않는 한(**넣지 않는다** — 넣으면 각 레인이 전체 태스크 목록을
-통째로 순차 실행해 같은 워크트리를 N중으로 겹쳐 쓴다), 각 레인은
-`orchestrate.py`의 단일 호출 경로를 타고 **같은 `summary.json`/
-`implement-log.md`를 동시에 read-modify-write한다.** 마지막에 끝난 레인이
-덮어쓰므로 이 두 파일은 레인별 판단 근거로 쓸 수 없다. 레인마다 유일하게
-안전한 파일은 각자의 `.out`뿐이다. 그래서 종료 코드를 그 파일 안에 직접
-남긴다:
+10분 한도를 넘겨 파일도 로그도 없이 통째로 죽는다. 반드시 detached로 돌린다:
 
 ```bash
 nohup bash -c '
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>" --skip-verify
+  --implement-agent pi --provider macstudio-gemma4 \
+  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800 --skip-verify
 echo "EXIT_CODE=$?"
 ' > "<artifactDir>/implement-task-N.out" 2>&1 &
 ```
 
-`openrouter-free` 레인에는 `--implement-agent pi --provider openrouter-free
---implementation-timeout 900`을 붙인다. `modal-qwen38` 레인에는
-`--implement-agent piqwen --provider modal-qwen38
---implementation-timeout 1800`을 붙인다. `turbofieldfare` 레인에는
-`--implement-agent pi --provider turbofieldfare --implementation-timeout
-86400`을 붙인다.
-
-라운드 내 모든 `.out` 파일에 `EXIT_CODE=`가 찍힐 때까지 30~60초 간격으로
-폴링한다(단 `turbofieldfare` 레인만 있는 라운드는 최대 24시간 걸리므로
-[10분 간격으로 폴링한다](#로컬-gemma-4-최후-폴백)):
+`.out` 파일에 `EXIT_CODE=`가 찍힐 때까지 30~60초 간격으로 폴링한다:
 
 ```bash
-for f in "<artifactDir>"/implement-task-*.out; do
-  printf '%s: %s\n' "$(basename "$f")" \
-    "$(grep -o 'EXIT_CODE=[0-9]*' "$f" | tail -1 || echo RUNNING)"
-done
+grep -o 'EXIT_CODE=[0-9]*' "<artifactDir>/implement-task-N.out" | tail -1 || echo RUNNING
 ```
 
-한 레인의 `EXIT_CODE=`를 확인하면 그 레인만 즉시 [실패 처리](#실패-처리)로
-분류하고, 형제 레인의 종료를 기다리지 않고 재디스패치한다. "즉시"는 "그
-레인이 끝난 것을 폴링으로 확인한 즉시"를 뜻한다 — 실시간으로 실패를 감시할
-방법은 없다.
+`EXIT_CODE=`가 확인되면 [실패 처리](#실패-처리)로 분류한다. 0이 아니면
+재시도 규칙을, 0이면 Step 6으로 간다.
 
 ### Step 6: 오케스트레이터 리뷰 게이트
 
@@ -652,18 +303,17 @@ done
 - 스킵 마킹(`@pytest.mark.skip`, `xfail`, `it.skip`)이 추가됐는지
 - 구현이 스텁만 채우고 실제 동작이 없는지
 
-무료 모델은 지시 준수율이 낮다. 이 단계를 건너뛰지 않는다.
+로컬 모델은 지시 준수율 편차가 있다. 이 단계를 건너뛰지 않는다.
 
 **3단계 — 명세 준수:** 실제 코드 변경(`git diff`)을 태스크 명세와 한 줄씩
 대조한다.
 
-**4단계 — 통합 확인:** 선행 태스크와의 인터페이스가 맞는지, 의도치 않은 결합이
-생기지 않았는지 확인한다.
+**4단계 — 통합 확인:** 선행 태스크와의 인터페이스가 맞는지 확인한다.
 
-문제가 있으면 리뷰 결과를 피드백으로 Step 5를 재실행한다. 두 번째도 실패하면
-사용자에게 선택지를 제시한다.
+문제가 있으면 리뷰 결과를 피드백으로 Step 5를 재실행한다(재시도 규칙은
+[실패 처리](#실패-처리) 참고). 두 번째도 실패하면 사용자에게 선택지를 제시한다.
 
-문제가 없으면 다음 라운드로(Step 4-6 반복), 라운드가 모두 끝났으면 Step 7로.
+문제가 없으면 다음 태스크로(Step 4-6 반복), 태스크가 모두 끝났으면 Step 7로.
 
 Advisory diff 리뷰는 `fiftybox-execute`와 동일한 자연어 opt-in 트리거를
 따른다(`~/.claude/skills/fiftybox-execute/scripts/diff_review.py` 재사용).
@@ -677,9 +327,7 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 ```
 
 첫 실패 시 실패한 태스크의 Step 5를 실패 출력과 함께 **1회 자동 재시도**한다.
-`--implement-agent`/`--provider`/`--model` **3축 모두** 그 태스크에 배정됐던
-값 그대로 재시도한다 — 재시도에서 모델을 바꾸지 않는다(모델 교체는
-[실패 처리](#실패-처리)가 모델 단위로 분류했을 때만 한다).
+3축은 고정값 그대로다 — 재시도에서 모델을 바꾸지 않는다.
 
 ### Step 8: Complete (Phase 7)
 
@@ -691,20 +339,15 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 ### Step 9: Deploy (Phase 7b)
 
+[preflight](#맥스튜디오-서버-preflight) 후:
+
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<작업>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent "<IMPL_AGENT>" --provider "<IMPL_PROVIDER>" \
-  --model "<IMPL_MODEL>"
+  --implement-agent pi --provider macstudio-gemma4 \
+  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800
 ```
-
-`openrouter-free`면 `--implement-agent pi --provider openrouter-free
---implementation-timeout 900`. `modal-qwen38`이면 웨이크업 후
-`--implement-agent piqwen --provider modal-qwen38 --implementation-timeout
-1800`. `turbofieldfare`면
-[서버 preflight](#로컬-gemma-4-최후-폴백) 후 `--implement-agent pi --provider
-turbofieldfare --implementation-timeout 86400`.
 
 ### Step 10: Cleanup (Phase 8)
 
@@ -714,40 +357,10 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --artifact-dir "<artifactDir>"
 ```
 
-`summary.json`의 최종 상태를 보고한다. **이번 실행이 TurboFieldfare 서버를
-새로 띄웠다면**(preflight에서 기존 프로세스가 없어서 이 스킬이 직접 기동한
-경우) 종료할지 사용자에게 묻는다. 원래부터 떠 있던 서버는 건드리지 않는다.
-
----
-
-## 모델 소진 처리
-
-라운드 중 한 모델이 소진되면 그 태스크만 재배정한다. 형제 레인은 계속
-진행한다.
-
-**재배정 규칙:**
-1. 방금 실패한 `provider/model`을 **이번 실행 동안 유효한 차단 목록**에
-   넣는다(메모리에 두고, `model-choice.json`의 `blocklist` 배열에도 append).
-   **재탐색으로 그 모델이 다시 `smoke: ok`로 나와도 이번 실행 동안은 다시
-   배정하지 않는다.** opencode 무료 티어는 짧은 창으로 리셋되므로, 이 규칙이
-   없으면 방금 막힌 모델을 재탐색이 또 뽑아 같은 실패를 반복하는 루프에
-   빠진다.
-2. 후보는 **차단 목록에 없고, 계정 단위로 소진되지 않은 레인에 속하며, 이번
-   라운드에서 다른 태스크가 쓰고 있지 않은** 모델 중에서만 고른다.
-3. 레인이 계정 단위 실패(`auth`/`window`/`credit`)로 닫혔으면 그 레인의
-   **모든** 모델이 이번 실행에서 제외된다 — 레인 안에서 다른 모델을 찾지
-   않는다.
-4. 조건을 만족하는 후보가 없으면 그 태스크를 다음 라운드로 미룬다
-   ([opencode 폴백 순서](#opencode-폴백-순서) 3번과 같은 보류 규칙).
-5. 남은 라운드도 후보도 없으면 중단하고 보고한다.
-   **유료 모델로 임의 전환하지 않는다.**
-
-모든 교체는 `<artifactDir>/model-choice.json`의 `history`에, 차단은
-`blocklist`에 append한다. **이 파일은 orchestrate.py가 읽지도 쓰지도 않는
-순수 수기 감사 로그다** — 여기 뭘 적어도 실행 동작 자체는 바뀌지 않는다.
-차단 목록을 실제로 지키는 것은 오케스트레이터(Claude/Codex)의 책임이고, 이
-파일은 최종 보고에서 "어떤 태스크가 어떤 모델로 돌았고 왜 바뀌었는지"를
-재구성하는 용도다.
+`summary.json`의 최종 상태를 보고한다. **11234/11235번 mlx-serve는 임의로
+끄지 않는다** — 각각 8bit·Gemma4의 상시 서버이며 다른 세션·레인이 사용 중일
+수 있다. 두 포트는 독립 프로세스라 예전 oMLX처럼 함께 내려가지 않는다.
+8000번 oMLX는 휴면이 정상 — 떠 있으면 사용자에게 알리기만 한다.
 
 ---
 
@@ -759,36 +372,24 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 - force push, force merge, reset hard, `-D` 브랜치 삭제 금지
 - Phase 7 이전 push 금지
 - provider는 커밋·푸시하지 않는다
-- 자동 재시도는 태스크당 1회만(모델 단위 실패로 인한 provider 내부 모델
-  스왑은 이 카운트에 들어가지 않는다 — [NIM](#nim-폴백-순서)/[opencode](#opencode-폴백-순서)
-  폴백 참고)
+- 자동 재시도는 태스크당 1회만
 - 실패 시 조용히 복구하지 않고 선택지를 제시한다
 
 이 스킬 고유:
 
 - **Claude/Codex 오케스트레이터는 구현 코드를 직접 쓰지 않는다.** 계획서
-  내용, 속도, 모델 가용성과 무관하다
+  내용, 속도, 모델 상태와 무관하다
+- **executor는 `pi`/`macstudio-gemma4`/`mlx-community--gemma-4-26B-A4B-it-qat-4bit`로 고정이다.**
+  어떤 실패·속도 문제도 모델이나 provider를 바꾸지 않는다. 유료 모델·원격
+  무료 모델로 전환하지 않는다
 - provider는 테스트 파일을 수정하지 않는다. 수정했으면 되돌리고 재실행한다
 - `--dangerously-skip-permissions`는 orchestrate가 만든 격리된 워크트리 안에서만
   유효하다
-- **OpenRouter는 `:free` 모델만 사용한다. 어떤 상황에서도 유료 모델·유료
-  변형으로 전환하지 않는다**
-- 무료 원격 후보(openrouter-free/opencode/Modal/NIM)가 모두 막히면 로컬 Gemma 4
-  (`turbofieldfare`, 켜져 있을 때)로 최후 시도한다. 그마저 없거나 막히면
-  중단한다. 유료 모델로 넘어가지 않는다
-- `turbofieldfare` 레인에는 `--auto-resume`을 절대 붙이지 않는다(watcher
-  TTL 6시간 < 레인 타임아웃 24시간)
-- `turbofieldfare` 레인의 실패는 자동 재시도하지 않는다(위 "자동 재시도는
-  태스크당 1회만"의 예외) — 사용자에게 먼저 묻는다
-- 배치 크기는 후보 모델 수이고, 라운드 안 각 태스크는 서로 다른 모델에 배정한다
 - `--implement-agent`에는 에이전트 이름만, `--provider`에는 백엔드 이름만
-  넣는다. 섞지 않는다 — [후보 풀 구성](#후보-풀-구성)의 3튜플 표 참고
-- Pi 계열 레인(`pi`/`piqwen`)에는 `--provider`를 반드시 명시한다. 생략하면
-  기본값 `opencode-go`로 조용히 오배송된다
-- 실패 분류는 [실패 처리](#실패-처리) 표로만 한다. 표 밖의 근거로 모델을
-  바꾸지 않는다
-- 계정 단위 실패(`auth`/`window`/`credit`)에 **모델 교체를 해결책으로
-  제시하지 않는다**
-- 한 번 실패로 차단된 모델은 이번 실행 동안 재배정하지 않는다
+  넣는다 — [Executor (고정)](#executor-고정) 표 참고
+- **디스패치 앞에 매번 서버 preflight 헬스체크를 한다.** 11235번은 launchd
+  관리 상시 서버다 — 이 스킬이 임의로 끄거나 재시작하지 않는다. 8000번
+  oMLX(휴면 예정)가 떠 있으면 알리고 임의로 끄지 않는다
 - `--phase implement`는 항상 detached로 돌리고 `EXIT_CODE=` sentinel을 남긴다
 - `task-batches.md`에 ```json 태스크 블록을 넣지 않는다
+- 실패 분류는 [실패 처리](#실패-처리) 표로만 한다

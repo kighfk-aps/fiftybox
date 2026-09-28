@@ -97,16 +97,21 @@ mkdir -p "$CODEX_SKILLS_DIR/fiftybox-plans"
 cp "$SCRIPT_DIR/skills/fiftybox-plans/SKILL.md" "$CODEX_SKILLS_DIR/fiftybox-plans/SKILL.md"
 log "Installed Codex skill fiftybox-plans → $CODEX_SKILLS_DIR/fiftybox-plans"
 
-# Install fiftybox-local (tracked; local/free execute)
-mkdir -p "$LOCAL_SKILL_DIR/scripts"
+# Install fiftybox-local (tracked; fixed Mac Studio local executor)
+# Stale discovery scripts from the old multi-lane design are removed on upgrade.
+mkdir -p "$LOCAL_SKILL_DIR"
+for stale_dir in "$LOCAL_SKILL_DIR/scripts" "$CODEX_LOCAL_SKILL_DIR/scripts"; do
+  if [[ -d "$stale_dir" ]]; then
+    rm -f "$stale_dir/discover_free_models.py" \
+          "$stale_dir/discover_openrouter_free.py" \
+          "$stale_dir/weekly_screen_openrouter.py"
+    rmdir "$stale_dir" 2>/dev/null || true
+  fi
+done
 cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
-cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$LOCAL_SKILL_DIR/scripts/"
-cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_openrouter_free.py" "$LOCAL_SKILL_DIR/scripts/"
 log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
-mkdir -p "$CODEX_LOCAL_SKILL_DIR/scripts" "$CODEX_LOCAL_SKILL_DIR/agents"
+mkdir -p "$CODEX_LOCAL_SKILL_DIR/agents"
 cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$CODEX_LOCAL_SKILL_DIR/SKILL.md"
-cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_free_models.py" "$CODEX_LOCAL_SKILL_DIR/scripts/"
-cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/discover_openrouter_free.py" "$CODEX_LOCAL_SKILL_DIR/scripts/"
 cp "$SCRIPT_DIR/skills/fiftybox-local/agents/openai.yaml" "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml"
 log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
 

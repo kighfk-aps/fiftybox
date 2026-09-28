@@ -20,3 +20,4 @@ fiftybox-structure.png
 
 # CommandCode local agent state
 .commandcode/
+.DS_Store

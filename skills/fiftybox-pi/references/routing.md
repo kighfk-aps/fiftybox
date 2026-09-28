@@ -17,7 +17,7 @@
 
 | # | 레인 | 모델 순서 | 비고 |
 |---|---|---|---|
-| 1 | `openrouter-free` | 매 실행 탐색 (`discover_openrouter_free.py`: cost==0 ∧ toolcall ∧ context≥131072) | 429 변동성 큼 — healthy 목록만 사용, 태스크마다 다른 모델 분산 |
+| 1 | `openrouter-free` | 매 실행 실측 탐색 (cost==0 ∧ toolcall ∧ context≥131072 필터) | 429 변동성 큼 — healthy 목록만 사용, 태스크마다 다른 모델 분산 |
 | 2 | `nvidia-nim` | gpt-oss-120b → kimi-k3 → laguna-xs-2.1 → minimax-m3 (설정 JSON 키 순서) | timeout 600s 기본; 2026-09-04 기준 410 장애 관측 — preflight 필수 |
 | 3 | `groq` | (tool 지원 무료 모델 — Stage 0에서 미확정) | `GROQ_API_KEY` 없으면 레인 비활성 |
 | 4 | `modal-qwen38` | qwen3.8-27b-q4_k_m (agent `piqwen`, `--thinking off`) | 콜드스타트 wake-up ping (t+75/120/150s), timeout 1800s |

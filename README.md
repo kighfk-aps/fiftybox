@@ -77,7 +77,7 @@ those duplicated every fiftybox entry in Claude Code's skill list.
 | `/fiftybox-orchestration` | Full pipeline: explore → clarify → design → implement → review → commit → push |
 | `/fiftybox-plans` | Planning front half only — produces a saved Markdown plan for later handoff |
 | `/fiftybox-execute` | Parallel-batch TDD execution; `--provider` selects opencode-go / commandcode / pi / grok |
-| `/fiftybox-local` | Dynamic-parallel TDD on local/free providers (opencode free-tier, Modal Qwen3.8-27B) |
+| `/fiftybox-local` | Sequential TDD on the fixed local executor — Mac Studio Gemma4-26B-A4B (mlx-serve via Pi CLI) |
 | `/fiftybox-gpt-review` | Reviews a design or plan document with Codex GPT models |
 | `/fiftybox-config` | Interactive checkbox TUI to toggle which CLI providers/models are currently usable — run by the human, not Claude |
 

@@ -1,0 +1,95 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 900" role="img" aria-labelledby="title desc">
+  <title id="title">Fiftybox 아키텍처: 안전장치가 있는 에이전트 작업장</title>
+  <desc id="desc">Fiftybox Claude Code 플러그인의 근거 기반 한 페이지 아키텍처 지도입니다. 설치, 격리된 오케스트레이션 파이프라인, 아티팩트와 워크트리, 제공자 레인, 테스트·리뷰 게이트, 관측 한계를 보여 줍니다.</desc>
+  <style>
+    :root { color-scheme: light dark; }
+    .bg { fill: #f7f8fc; } .panel { fill: #ffffff; stroke: #cbd5e1; stroke-width: 1.5; }
+    .band { fill: #e8eefc; } .ink { fill: #172033; } .muted { fill: #526277; }
+    .title { font-family: Helvetica; font-size: 28px; font-weight: 700; } .subtitle { font-family: Helvetica; font-size: 14px; }
+    .h { font-family: Helvetica; font-size: 14px; font-weight: 700; } .t { font-family: Helvetica; font-size: 12px; } .s { font-family: Helvetica; font-size: 11px; }
+    .tiny { font-family: Helvetica; font-size: 10px; } .code { font-family: Menlo; font-size: 11px; }
+    .node { fill: #fff; stroke: #7891ba; stroke-width: 1.5; } .agent { fill: #eef5ff; stroke: #3976b9; stroke-width: 1.5; }
+    .store { fill: #f4efff; stroke: #8155c7; stroke-width: 1.5; } .gate { fill: #effaf2; stroke: #368552; stroke-width: 1.5; }
+    .risk { fill: #fff4e5; stroke: #c9791d; stroke-width: 1.5; } .missing { fill: #fff0f0; stroke: #c74b4b; stroke-width: 1.5; stroke-dasharray: 5 4; }
+    .line { fill: none; stroke: #39516f; stroke-width: 2; marker-end: url(#arrow); } .dash { fill: none; stroke: #a25c00; stroke-width: 2; stroke-dasharray: 6 4; marker-end: url(#arrowWarn); }
+    @media (prefers-color-scheme: dark) { .bg { fill:#101723; } .panel,.node { fill:#172233; stroke:#5e7597; } .band { fill:#1c2e4c; } .ink { fill:#edf3ff; } .muted { fill:#b6c4d9; } .agent { fill:#142c49; stroke:#60a5fa; } .store { fill:#2b1e45; stroke:#b794f4; } .gate { fill:#143524; stroke:#69c58a; } .risk { fill:#3a2916; stroke:#f0a54a; } .missing { fill:#3a1d23; stroke:#fb7185; } .line { stroke:#bbcae0; } }
+  </style>
+  <defs>
+    <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#39516f"/></marker>
+    <marker id="arrowWarn" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 Z" fill="#a25c00"/></marker>
+  </defs>
+  <rect class="bg" width="1200" height="900" rx="16"/>
+  <text class="title ink" x="42" y="48">Fiftybox — 안전장치가 있는 에이전트 작업장</text>
+  <text class="subtitle muted" x="42" y="72">비유: Claude가 작업반장이고, 격리 작업대·작업표 보관함·검사 게이트가 검증되지 않은 AI 변경을 main으로부터 막습니다.</text>
+
+  <rect class="panel" x="34" y="96" width="1132" height="62" rx="10"/>
+  <text class="h ink" x="52" y="122">범위와 근거 상태</text>
+  <text class="t muted" x="52" y="144">선언됨: Claude Code 플러그인과 로컬 Python/Bash 하네스. 의도: 탐색 → 명확화 → TDD → 리뷰 → 커밋/병합/푸시. 관측됨: 실행 아티팩트·제공자 계정·배포 서비스는 확인하지 못했습니다.</text>
+
+  <!-- Context / installation -->
+  <rect class="panel" x="34" y="180" width="218" height="344" rx="10"/>
+  <rect class="band" x="34" y="180" width="218" height="34" rx="10"/><text class="h ink" x="48" y="202">1. 설치와 진입점</text>
+  <rect class="node" x="51" y="232" width="184" height="60" rx="8"/><text class="h ink" x="64" y="255">개발자</text><text class="s muted" x="64" y="274">./install.sh 실행</text>
+  <path class="line" d="M143 292 V315"/>
+  <rect class="node" x="51" y="319" width="184" height="78" rx="8"/><text class="h ink" x="64" y="342">설치 스크립트</text><text class="s muted" x="64" y="360">스킬과 어댑터를 복사</text><text class="s muted" x="64" y="376">설정이 없을 때만 초기화</text>
+  <path class="line" d="M143 397 V420"/>
+  <rect class="agent" x="51" y="424" width="184" height="79" rx="8"/><text class="h ink" x="64" y="447">Claude Code 스킬</text><text class="code muted" x="64" y="466">/fiftybox-orchestration</text><text class="s muted" x="64" y="484">작업 설명을 다음 단계에 전달</text>
+  <text class="tiny muted" x="51" y="516">근거: install.sh, README 사용법</text>
+
+  <!-- Flow -->
+  <rect class="panel" x="274" y="180" width="610" height="344" rx="10"/>
+  <rect class="band" x="274" y="180" width="610" height="34" rx="10"/><text class="h ink" x="289" y="202">2. 작업대 흐름 (선언된 오케스트레이션)</text>
+  <rect class="agent" x="295" y="234" width="128" height="70" rx="8"/><text class="h ink" x="308" y="257">Claude</text><text class="s muted" x="308" y="275">설정 / 요구 명확화</text><text class="s muted" x="308" y="291">설계 + 실패하는 테스트 작성</text>
+  <path class="line" d="M423 269 H455"/>
+  <rect class="store" x="455" y="234" width="137" height="70" rx="8"/><text class="h ink" x="468" y="257">작업표 보관함</text><text class="s muted" x="468" y="275">.omx/artifacts/</text><text class="s muted" x="468" y="291">계획, 로그, 요약</text>
+  <path class="line" d="M592 269 H626"/>
+  <rect class="node" x="626" y="234" width="235" height="70" rx="8"/><text class="h ink" x="640" y="257">격리된 작업대</text><text class="s muted" x="640" y="275">작업 브랜치의 git worktree</text><text class="s muted" x="640" y="291">파일 소유권을 확인</text>
+  <path class="line" d="M743 304 V334"/>
+  <rect class="agent" x="626" y="338" width="235" height="64" rx="8"/><text class="h ink" x="640" y="361">Pi / 선택한 구현 에이전트</text><text class="s muted" x="640" y="380">탐색 후 작업 묶음별로 편집</text>
+  <path class="line" d="M626 370 H592"/>
+  <rect class="gate" x="455" y="338" width="137" height="64" rx="8"/><text class="h ink" x="468" y="361">검사</text><text class="s muted" x="468" y="380">테스트 + 리뷰 게이트</text>
+  <path class="line" d="M455 370 H423"/>
+  <rect class="gate" x="295" y="338" width="128" height="64" rx="8"/><text class="h ink" x="308" y="361">전달</text><text class="s muted" x="308" y="380">커밋 → 병합 → 푸시</text>
+  <path class="dash" d="M359 402 V448 H743 V402"/>
+  <text class="s muted" x="410" y="443">테스트 실패 뒤 한 번 자동 재시도; 작업 실패는 해당 단계를 멈춤</text>
+  <text class="tiny muted" x="295" y="499">근거: orchestrate.py PHASE_CHOICES, phase_setup, phase_implement, phase_review_test, phase_complete</text>
+
+  <!-- Providers -->
+  <rect class="panel" x="906" y="180" width="260" height="344" rx="10"/>
+  <rect class="band" x="906" y="180" width="260" height="34" rx="10"/><text class="h ink" x="920" y="202">3. 교체 가능한 작업자</text>
+  <text class="t muted" x="920" y="234">기본 하네스 레인</text>
+  <rect class="agent" x="920" y="248" width="230" height="42" rx="7"/><text class="t ink" x="934" y="274">Pi / opencode-go / DeepSeek</text>
+  <rect class="agent" x="920" y="299" width="230" height="42" rx="7"/><text class="t ink" x="934" y="325">Codex-write / GPT lane</text>
+  <rect class="agent" x="920" y="350" width="230" height="42" rx="7"/><text class="t ink" x="934" y="376">Grok or CommandCode lanes</text>
+  <rect class="agent" x="920" y="401" width="230" height="42" rx="7"/><text class="t ink" x="934" y="427">Local: OpenCode / Modal / NIM</text>
+  <text class="s muted" x="920" y="468">활성화 선택지는 저장소 밖에 있음</text><text class="code muted" x="920" y="485">~/.claude/fiftybox-config.json</text>
+  <text class="tiny muted" x="920" y="505">근거: default-config.json, fiftybox-local/SKILL.md</text>
+
+  <!-- outcomes -->
+  <rect class="panel" x="34" y="548" width="1132" height="310" rx="10"/>
+  <rect class="band" x="34" y="548" width="1132" height="34" rx="10"/><text class="h ink" x="48" y="570">견고한 부분, 조용히 실패할 수 있는 부분, 그리고 다음 행동</text>
+  <text class="h ink" x="56" y="610">강점</text>
+  <text class="t muted" x="56" y="635">• worktree 격리가 미완성 변경을 기본 체크아웃에서 분리합니다.</text>
+  <text class="t muted" x="56" y="658">• 아티팩트가 공유 대화 메모리 없이도 인수인계를 검토 가능하게 만듭니다.</text>
+  <text class="t muted" x="56" y="681">• 실패 테스트와 소유권/무작업 검사가 구현 결과를 구체화합니다.</text>
+  <text class="t muted" x="56" y="704">• 민감 파일은 스테이징 전에 제외하며 병합은 분리 worktree에서 수행합니다.</text>
+
+  <rect class="risk" x="430" y="598" width="335" height="126" rx="8"/>
+  <text class="h ink" x="444" y="621">리스크: 근거 → 결과</text>
+  <text class="s muted" x="444" y="644">기본 리뷰는 권고형 → 테스트 통과 이슈가 배포될 수 있음.</text>
+  <text class="s muted" x="444" y="665">전역 제공자 설정/자격 증명 → 호스트별 재현성이 달라짐.</text>
+  <text class="s muted" x="444" y="686">완료 시 원격 푸시 → 외부 변경은 CI 근거가 필요함.</text>
+  <text class="s muted" x="444" y="707">관측한 실행 없음 → 제공자/인증/브랜치 동작이 미검증.</text>
+
+  <rect class="missing" x="796" y="598" width="352" height="126" rx="8"/>
+  <text class="h ink" x="810" y="621">다음 1 → 3</text>
+  <text class="s muted" x="810" y="644">1. dry-run을 실행하고 요약과 단계 로그를 보관합니다.</text>
+  <text class="s muted" x="810" y="665">2. 모의 제공자로 설치/오케스트레이터 CI를 추가합니다.</text>
+  <text class="s muted" x="810" y="686">3. 고위험 작업은 엄격 리뷰를 쓰고 브랜치/푸시 정책을 문서화합니다.</text>
+
+  <rect class="panel" x="56" y="748" width="1092" height="86" rx="8"/>
+  <text class="h ink" x="70" y="772">범례와 감사 경계</text>
+  <text class="s muted" x="70" y="793">실선 화살표 = 코드에 선언된 제어/데이터 흐름. 점선 = 재시도 경로. 보라 = 실행 아티팩트, 초록 = 차단 게이트, 주황/빨강 = 결과 또는 미관측 상태.</text>
+  <text class="s muted" x="70" y="813">소스 근거: README.md, install.sh, skills/fiftybox-orchestration/SKILL.md, scripts/orchestrate.py, skills/fiftybox-config/config/default-config.json, skills/fiftybox-local/SKILL.md.</text>
+</svg>
