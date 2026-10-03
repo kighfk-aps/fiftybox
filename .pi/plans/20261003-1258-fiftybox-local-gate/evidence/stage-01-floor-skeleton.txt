@@ -1,0 +1,33 @@
+You are implementing a bounded task in this repository.
+
+Working directory: /Users/tanpapa/Desktop/develop-a/fiftybox/.pi/plans/20261003-1258-fiftybox-local-gate/scratch/gate-probe/.worktrees/orchestrate-20261003T040058Z
+
+## Task Description
+
+<user-task>
+add helper X in app.py
+</user-task>
+
+## Design Specification
+
+A. one requirement
+
+
+## Intent Summary
+
+(not provided)
+
+
+
+## Constraints
+
+- Edit workspace files directly to implement the design.
+- Keep changes scoped to the design specification.
+- Do NOT commit, push, deploy, reset, or run destructive git operations.
+- Do NOT modify files outside the designed scope.
+- If the design is impossible or unsafe, stop and explain why.
+
+## Final Response
+
+- List all changed/created/deleted files.
+- State what verification you ran or why you could not run it.

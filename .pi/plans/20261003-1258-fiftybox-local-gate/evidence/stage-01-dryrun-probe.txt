@@ -1,0 +1,21 @@
+# Stage 01 dry-run gate probe — 2026-10-03 13:02:25
+host: 100.115.199.115 up (ping 0.95ms), 11235=000 11234=000 => server DOWN, probe ran fully offline (--dry-run setup + --dry-run implement)
+
+## measured (single-task mode, no json task block)
+| design.md | task spec | intent-summary | implement-prompt.md | gate(120) |
+|---|---|---|---|---|
+| 1 | 1 | absent | 33 | PASS (floor) |
+| 40 | 1 | 7 | 79 | PASS |
+| 100 | 1 | 7 | 139 | OVER |
+
+fixed boilerplate = 33 - design(1) - spec(1) = 31 lines (orchestrate.py:2478-2508 template + fence + 6 section headers + 14 blank lines)
+model: prompt = 31 + design + spec + intent
+dry-run evidence: '[DRY RUN] Skipping Pi CLI implementation' in logs/phase-6-implement.log (grep -c DRY RUN = 1); no Pi process spawned
+git -C scratch/gate-probe status --porcelain => empty (.omx/ + .worktrees/ gitignored; artifacts live inside the worktree root, orchestrate.py:1084)
+NOTE: setup without --dry-run requires live 11235 (pi --list-models preflight, orchestrate.py:1445) -> skipped, server down
+NOTE: default model leaked as deepseek-v4-flash when --model omitted -> fixed 3-axis must stay explicit
+
+## arithmetic conflict found in source plan
+source plan: design<=80 + spec<=15 + prompt<=120 -> 31+80+15+intent = >=126 > 120 (unsatisfiable)
+real artifacts: design 205 -> prompt 237 (20260904T020937Z, unstable lane) ; design 1398 -> prompt 1481 (20260810T024138Z)
+clean-success band from research: design 22~54 lines -> DESIGN_MD_MAX_LINES 60 closes the triangle: 31+60+15+14(intent)=120

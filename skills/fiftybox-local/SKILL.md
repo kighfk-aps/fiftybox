@@ -13,7 +13,8 @@ Gemma4-26B-A4B(QAT 4-bit)로만 돌린다. **executor는 고정이다** — 후�
 모델이 통과시킴(Green) → 오케스트레이터 리뷰
 
 **실행 방식:** 순차. 모델이 하나뿐이므로 병렬 디스패치가 없다 — 태스크를 한
-줄씩, 앞 태스크의 리뷰가 끝나면 다음 태스크를 디스패치한다.
+줄씩, 앞 태스크의 리뷰가 끝나면 다음 태스크를 디스패치한다. 각 태스크는
+[`Gemma4 실행 예산`](#gemma4-실행-예산) 상한 안에서만 디스패치된다.
 
 ---
 
@@ -59,6 +60,33 @@ provider/model 플래그가 없다 — executor가 고정이기 때문이다.
 mlx-serve 프로세스**다 — 서로 독립이라 한쪽 재시작이 다른 쪽에 영향을 주지
 않는다. 컨텍스트가 넓어도 태스크 프롬프트와 design.md 발췌는 간결하게 유지한다.
 서버 운용 기록은 `~/Desktop/develop-a/local-model/`(모델 전환·평가 리포트).
+
+### Gemma4 실행 예산
+
+executor가 한 번의 디스패치로 처리할 수 있는 입력 크기의 정량 상한이다. 태스크는
+디스패치 전에 이 예산을 통과해야 한다.
+
+| 상수 | 값 | 근거 |
+|---|---|---|
+| `DESIGN_MD_MAX_LINES` | `60` | 클린 성공 태스크의 design은 22~54줄 band였다 |
+| `TASK_SPEC_MAX_LINES` | `15` | 205줄·3~4파일 태스크는 반복 재시도 후 `no_changes`로 끝났다 |
+| `TASK_MAX_FILES` | `2` | 단일 태스크가 소유(수정)할 수 있는 파일 상한 |
+| `INTENT_SUMMARY_MAX_LINES` | `14` | intent 51줄이 낀 1481줄 프롬프트 사고가 실존한다 |
+| `PROMPT_MAX_LINES` | `120` | 실측 게이트 — `implement-prompt.md`의 `wc -l` |
+
+**산수:** `orchestrate.py`가 `implement`마다 고정 템플릿 **31줄** + 태스크 명세 +
+`design.md` 전문 + `intent-summary.md`를 `implement-prompt.md`로 합친다. 즉
+`프롬프트 = 31 + design + spec + intent`이고, 위 상한을 전부 채우면
+`31+60+15+14 = 120`으로 게이트에 딱 맞는다. 하나라도 넘으면 게이트에서 떨어진다.
+(실측: design 40 → 프롬프트 79 / design 100 → 프롬프트 139)
+
+**병목:** 컨텍스트는 262,144지만 `max_tokens`가 **16,384**라 **출력이 먼저** 막힌다.
+`IMPL_TIMEOUT`은 `1800`초. 컨텍스트가 남는다고 태스크를 키우지 않는다.
+
+**Calibration:** Step 6의 `gemma4-metrics.md`에 태스크별 실측을 누적한다. 최근
+5태스크 성공률 < 80% → `DESIGN_MD_MAX_LINES` 60→45, `PROMPT_MAX_LINES` 120→100.
+10태스크 연속 100% → `DESIGN_MD_MAX_LINES` 60→70, `PROMPT_MAX_LINES` 120→140.
+조정은 누적 실측을 보여주고 **사용자 승인 후** 반영한다. 임의로 바꾸지 않는다.
 
 ### 설정 게이트
 
@@ -173,7 +201,10 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 | `Connection refused`, `Failed to connect`, 요청 중 EOF·502 | `server` |
 | `Unknown model`, 404, 410, 모델 ID 거부 | `model` |
 | `EXIT_CODE=124` | `timeout` |
-| `EXIT_CODE=3` (변경 파일 없음) | `no_changes` |
+| `EXIT_CODE=3`인데 태스크가 예산 초과였다(명세 >15줄 또는 파일 >2개 또는 design >60줄) | `too_long` |
+| 응답이 문장 도중에 잘림 — `max_tokens 16384` 출력 한도 신호 | `too_long` |
+| `changedFiles`가 명세 파일 수보다 적음 | `too_long` |
+| `EXIT_CODE=3` (변경 파일 없음), 태스크는 예산 이내 | `no_changes` |
 | `EXIT_CODE=1` + `not in the agents list`, `unrecognized arguments` | `orchestrate` |
 | 그 외 | `unknown` |
 
@@ -184,10 +215,19 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 
 - `server` → [preflight](#맥스튜디오-서버-preflight)부터 다시 실행(재기동
   포함) 후 같은 3축으로 1회 재시도한다.
-- `timeout` → 헬스체크로 서버가 살아있는지 확인한 뒤
-  `--implementation-timeout`을 3600으로 올려 1회 재시도한다.
-- `no_changes` → 같은 3축으로 1회 재시도한다. 반복되면 프롬프트 문제로
-  보고한다.
+- `timeout` → **timeout 값은 올리지 않는다.** timeout은 "입력이 길다"의 다른
+  얼굴이다. 헬스체크로 서버가 살아있는지 확인한 뒤 태스크를 **행동 경계에서 하프
+  2개로** 분할하고, 하프별 Red 테스트를 Step 4를 준용해 다시 쓴 뒤 **첫 하프부터
+  순차로** 재디스패치한다. 이는 원 태스크의 1회 재시도 예산을 소비한다. 하프까지
+  실패하면 사용자에게 선택지를 제시한다.
+- `too_long` → 입력이 [`Gemma4 실행 예산`](#gemma4-실행-예산)을 넘긴 상태다.
+  넘친 항목을 줄인다 — design이면 Step 1 실행계약 압축, 명세면 Step 3 하프
+  분할 — Step 5의 dry-run 게이트를 다시 통과시킨 뒤 재디스패치한다. 재시도는
+  태스크당 1회 예산 안에서 한다. timeout 값을 올리는 것으로 해결하지 않는다.
+- `no_changes` → 재디스패치하기 전에 **먼저** 이 태스크가 예산 상한을 넘지는
+  않았는지 점검한다(명세 줄수·소유 파일수·design 줄수). 넘쳤다면 `no_changes`가
+  아니라 `too_long`으로 재분류해 쪼개기로 대응한다. 예산 이내였으면 같은 3축으로
+  1회 재시도하고, 반복되면 프롬프트 문제로 보고한다.
 - `model` → `~/.pi/agent/models.json`의 백엔드 정의와 서버의 실제 모델 id가
   갈라진 것이다. 확인은 preflight 1번과 같은 curl로 `/v1/models`를 본다.
   스킬/설정 버그로 보고한다.
@@ -203,10 +243,11 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 **Task N 실패**
 
 **레인:** pi/macstudio-gemma4/mlx-community--gemma-4-26B-A4B-it-qat-4bit
-**분류:** <server | model | timeout | no_changes | orchestrate | unknown>
+**분류:** <server | model | timeout | too_long | no_changes | orchestrate | unknown>
 **근거:** <.out 로그에서 인용한 줄 + EXIT_CODE>
+**예산 점검:** <spec N줄 / files N개 / design N줄 / prompt N줄 — 상한 초과 여부>
 **추천 행동:**
-1. <선택지 1>
+1. <선택지 1 — 초과가 원인이라면 "하프 2개로 쪼개서 재디스패치">
 2. <선택지 2>
 ```
 
@@ -226,6 +267,19 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 **`design.md`는 필수다.** `--skip-verify`를 줘도 구현 페이즈가 이 파일을 읽는다.
 없으면 `design.md not found in artifact directory`로 즉시 실패한다.
 
+**executor용 실행계약으로 압축한다.** `<artifactDir>/design.md`는
+`DESIGN_MD_MAX_LINES(60)`를 넘기면 안 된다. **executor용** 파일이므로 배경·동기·
+대안 토의·태스크 분할 계획을 빼고 **파일 목록 / 인터페이스 / 행동 정의**만 남긴다.
+`orchestrate.py`가 매 디스패치마다 이 파일 **전문**을 `implement-prompt.md`에
+통째로 집어넣는다 — Step 5의 길이 게이트가 이 줄수를 실측한다.
+
+원문 전문은 `<artifactDir>/design-source.md`에 보존한다. 오케스트레이터와 리뷰
+단계만 읽고 **executor는 읽지 않는다**(orchestrate는 `design.md`만 읽는다).
+
+**60줄로 압축할 수 없으면 중단한다.** 설계가 실행계약으로 압축되지 않을 만큼
+크면 그건 태스크가 아니라 프로젝트다. 더 작은 설계로 분해할 것을 사용자에게
+요청하고 멈춘다. `design.md`를 60줄 넘게 쓰는 것으로 해결하지 않는다.
+
 ### Step 2: Setup (Phase 0)
 
 ```bash
@@ -242,14 +296,34 @@ macstudio-gemma4` preflight를 검증한다. JSON 출력에서 `artifactDir`과
 
 ### Step 3: 태스크 분해 (순차)
 
-설계를 원자적 구현 단위로 쪼개 순차 목록으로 만든다:
+분해하기 전에 먼저 [`Gemma4 실행 예산`](#gemma4-실행-예산) 표를 연다. 아래 상한은
+그 예산에서 온 것이다. 설계를 원자적 구현 단위로 쪼개 순차 목록으로 만든다:
 
 ```markdown
 ## Tasks (순차 — executor 1개 고정)
 
 1. Task A → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
+   Modify ONLY: src/probe.py
+   lines: spec 9
 2. Task B → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
+   Modify ONLY: src/probe.py, tests/test_probe.py
+   lines: spec 12
 ```
+
+**태스크마다 `Modify ONLY:` 소유 라인이 필수다.** 단일 태스크 모드에서는
+orchestrate.py가 소유권 섹션을 만들지 않는다(다중 모드만 만든다). 따라서 수정
+범위는 태스크 텍스트로만 전달된다. 이 라인이 없으면 executor가 어디까지 만져도
+되는지 모른다.
+
+**상한(하나라도 넘으면 그 태스크는 두 개로 쪼갠다):**
+
+- 명세 `TASK_SPEC_MAX_LINES(15)`줄 이하
+- 소유 파일 `TASK_MAX_FILES(2)`개 이하
+- "A하고 B하고 C"식 **복합 태스크 금지** — 연결사가 보이면 행동 경계에서 쪼갠다
+- 같은 파일을 15줄 넘게 수정해야 하면 그 파일의 작업을 **하프 연속 태스크**로
+  순차 분할한다(예: 시그니처+스텁 → 로직 → 예외 경로). 파일이 하나라는 사실은
+  태스크가 작다는 증거가 아니다.
+- 쪼갠 각 하프는 Step 4 Red 테스트도 **각 하프 명세만큼만** 새로 쓴다.
 
 **`<artifactDir>/task-batches.md`에 ```json 태스크 블록을 넣지 않는다.** 넣으면
 orchestrate.py가 다중 태스크 모드로 처리한다. 호출 1회 = 태스크 1개다.
@@ -265,6 +339,34 @@ orchestrate.py가 다중 태스크 모드로 처리한다. 호출 1회 = 태스�
 ### Step 5: 구현 (Green)
 
 [preflight](#맥스튜디오-서버-preflight)가 `200`인지 확인한 뒤 디스패치한다.
+
+**디스패치 전에 길이 게이트를 통과시킨다.** 실디스패치는 아래 게이트를 통과한
+것만 내보낸다:
+
+```bash
+python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
+  --phase implement --task "<task>" --cwd "$(pwd)" \
+  --artifact-dir "<artifactDir>" \
+  --implement-agent pi --provider macstudio-gemma4 \
+  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800 --skip-verify \
+  --dry-run
+
+wc -l "<artifactDir>/implement-prompt.md"
+```
+
+`--dry-run`은 Pi를 호출하지 않고 `implement-prompt.md`만 만든다(로그에
+`[DRY RUN] Skipping Pi CLI implementation`). 플래그 세트는 실디스패치와 **완전히
+동일**하게 유지한다 — dry-run이라고 플래그를 빼면 실측이 무의미해진다.
+
+- `wc`가 `PROMPT_MAX_LINES(120)` **이하** → 아래 nohup 실디스패치로 진행한다.
+- **초과** → 디스패치하지 않는다. Step 3으로 돌아가 태스크를 하프 2개로 쪼개거나
+  Step 1의 실행계약 압축(`design.md` ≤60줄)을 다시 한 뒤 게이트를 재실행한다.
+  줄이기 순서는 `design → task 명세 → intent`다
+  (`프롬프트 = 31 + design + spec + intent`).
+- 게이트를 거치지 않은 실디스패치는 [안전 계약](#안전-계약) 위반이다.
+
+> dry-run이 `summary.json`에 남기는 `dry_run` 상태는 실디스패치가 그대로
+> 덮어쓰므로 남겨두어도 무해하다.
 
 **foreground 실행 금지.** `--phase implement`를 foreground로 돌리면 Bash 도구의
 10분 한도를 넘겨 파일도 로그도 없이 통째로 죽는다. 반드시 detached로 돌린다:
@@ -317,6 +419,26 @@ grep -o 'EXIT_CODE=[0-9]*' "<artifactDir>/implement-task-N.out" | tail -1 || ech
 
 Advisory diff 리뷰는 `fiftybox-execute`와 동일한 자연어 opt-in 트리거를
 따른다(`~/.claude/skills/fiftybox-execute/scripts/diff_review.py` 재사용).
+
+#### 실행 메트릭 기록
+
+태스크가 이 리뷰 게이트를 통과하면 `<artifactDir>/gemma4-metrics.md`에 행을
+append한다. 다음 태스크의 상한 판단과 calibration 근거는 이 표다.
+
+| task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과 |
+|---|---|---|---|---|---|
+| Task A | 12 | 97 | 412s | 2 | success |
+
+- **spec 줄수** — Step 3 태스크 명세의 실측 줄수
+- **prompt 줄수** — `wc -l "<artifactDir>/implement-prompt.md"`(Step 5 dry-run에서
+  이미 실측한 그 값)
+- **duration** — `logs/phase-6-implement.log`의 `[DURATION]`
+- **changedFiles** — `summary.json`의 `changedFiles` 개수
+- **결과** — `success` / `retry` / `split` / `failed`
+
+이 표를 누적해서 [`Gemma4 실행 예산`](#gemma4-실행-예산)의 Calibration 규칙
+(최근 5태스크 성공률 < 80% → 하향, 10태스크 연속 100% → 상향)을 평가한다.
+상한 조정은 표를 보여주고 사용자 승인한 뒤에 반영한다.
 
 ### Step 7: Review + Test (Phase 6)
 
@@ -393,3 +515,9 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 - `--phase implement`는 항상 detached로 돌리고 `EXIT_CODE=` sentinel을 남긴다
 - `task-batches.md`에 ```json 태스크 블록을 넣지 않는다
 - 실패 분류는 [실패 처리](#실패-처리) 표로만 한다
+- **dry-run 길이 게이트(`PROMPT_MAX_LINES` 120줄)를 통과하지 않은 태스크는
+  실디스패치하지 않는다.** 게이트를 건너뛴 디스패치는 위반이다
+- **timeout 대응으로 timeout 값을 올리지 않는다.** `--implementation-timeout`은
+  `1800` 고정이고, 허용되는 대응은 태스크 쪼개기뿐이다
+- **executor용 `design.md`는 `DESIGN_MD_MAX_LINES(60)`줄 실행계약이고, 원문은
+  `design-source.md`에 보존한다.** executor는 `design-source.md`를 읽지 않는다

@@ -1,0 +1,55 @@
+# Definition of Done — final (corrected) — 2026-10-03 13:10
+
+Both copies: `~/.claude/skills/fiftybox-local/SKILL.md` ↔ `skills/fiftybox-local/SKILL.md`
+
+| check | required | actual | verdict |
+|---|---|---|---|
+| `diff exec repo` | exit 0 | IDENTICAL | PASS |
+| `grep -c '3600'` | 0 | 0 | PASS |
+| `grep -c 'too_long'` | ≥2 | 6 | PASS |
+| `grep -c 'Modify ONLY'` | ≥1 | 3 | PASS |
+| `grep -c 'gemma4-metrics.md'` | ≥1 | 2 | PASS |
+| `grep -c 'design-source.md'` | ≥1 | 2 | PASS |
+| `grep -c '### Gemma4 실행 예산'` | ≥1 | 1 | PASS |
+| Step 5 order dry-run→wc→120→nohup | in order | offsets 460 < 471 < 695 < 730 | PASS |
+| frontmatter vs git HEAD | unchanged | UNCHANGED | PASS |
+| `](#anchor)` integrity | 0 broken | 12 links, 0 broken | PASS |
+| safety-contract bullets | ≥9 (none deleted) | 12 | PASS |
+| length | — | 395 → 523 lines (+128) | info |
+
+## Gate is executable, not just documented
+
+The `bash` block inside the edited Step 5 was extracted **verbatim** from
+SKILL.md, placeholders substituted, and run (`scratch/gate-command.sh`):
+
+```
+exit=0
+design 58 lines + spec 1 line  →  implement-prompt.md = 92 lines   ≤ 120 PASS
+grep -c 'DRY RUN' logs/phase-6-implement.log = 1   (Pi never called)
+```
+
+Full measured ladder (all from real orchestrate.py runs, offline):
+
+| design | prompt | gate 120 |
+|---|---|---|
+| 1 | 33 | PASS (floor, boilerplate 31) |
+| 40 | 79 | PASS |
+| 58 | 92 | PASS (verbatim doc command) |
+| 100 | 139 | OVER → split |
+
+## Out-of-scope integrity
+
+- `orchestrate.py` is dirty in `~/.claude/skills` but **not by this work**:
+  mtime `2026-09-28 16:57:56` (5 days before this session), and
+  `grep -c 'PROMPT_MAX_LINES\|TASK_SPEC_MAX_LINES\|INTENT_SUMMARY_MAX_LINES\|too_long'`
+  → **0**. It was already modified before the session started (424 insertions /
+  160 deletions from earlier work). Untouched by this run.
+- fiftybox repo tracked changes: `M skills/fiftybox-local/SKILL.md` only, plus
+  untracked `.pi/plans/` (this plan) and `.sisyphus/` (source plan, pre-existing).
+
+## Not done (deliberate, awaiting user)
+
+- No commit in either repo (harness rule: commits need an explicit user ask).
+- Review wave F1–F4 from the source plan not dispatched.
+- Real (non-dry-run) `--phase setup` not exercised: 11235 is down (curl 000,
+  host pings OK).
