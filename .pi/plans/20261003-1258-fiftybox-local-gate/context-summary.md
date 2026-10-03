@@ -321,3 +321,20 @@ Append-only. Each block is written from live command output, not from memory.
 ### Open Risks
 - Runtime copy is unpushed — a machine rebuild from the GitHub repo alone would
   still lose the gate for the Claude runtime path.
+
+## Remote created for the runtime copy - 2026-10-03 13:20 (supersedes the no-remote risk above)
+
+- Created private repo **`github.com/kighfk-aps/myfiftybox`** (gh CLI, account
+  kighfk-aps, `repo` scope) and pushed `~/.claude/skills` main.
+- `git ls-remote` → `b17917e…` == local HEAD; pushed tree = 201 files;
+  remote blob `fiftybox-local/SKILL.md` = 25187 bytes with **15** gate markers.
+- Pre-push secret scan of committed content: only hits were the alphabet-sequence
+  fake keys inside `orchestrate/tests/test_orchestrate.py` redaction tests.
+- **Still not backed up:** 21 modified + 18 deleted + 29 untracked working-tree
+  entries in `~/.claude/skills`, including whole untracked skills
+  (`fiftybox-config/`, `scholar-kit/`, `grok-review/`, `fiftybox-cc-execute/`, …).
+  A restore from `myfiftybox` today yields the committed state, not the live one.
+- Blocker for a snapshot commit: `sprite-gen/.venv` is **76M** and `.gitignore`
+  does not cover root `.venv/` — must gitignore before any `git add -A`.
+  (Secret scan of untracked content: 1 hit, `AKIAAQAAAAAABAAH` inside Pillow in
+  that venv — placeholder-shaped, not a credential.)
