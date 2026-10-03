@@ -338,3 +338,41 @@ Append-only. Each block is written from live command output, not from memory.
   does not cover root `.venv/` — must gitignore before any `git add -A`.
   (Secret scan of untracked content: 1 hit, `AKIAAQAAAAAABAAH` inside Pillow in
   that venv — placeholder-shaped, not a credential.)
+
+## Skills backup (option 2) - 2026-10-03 13:35
+
+### Completed
+- `myfiftybox` pushed through 4 more commits: `873f2af` (10 never-tracked skills,
+  50 files), `ce83fbd` (review-voc-crawler amazon adapter + CSV export, 17 files),
+  `51be674` (fiftybox-cc-execute, grok-review), `37ab4e1` (correction).
+  Remote tree 201 → 289 entries. local == origin.
+
+### Current Truth
+- Two "untracked skills" were **embedded git repos**: `sprite-gen/` (clone of
+  aldegad/sprite-gen, **local commits on top**, 76M `.venv`) and
+  `svg-eli5-archify/` (clone of kcc920926-droid/explain_me, **0 ahead**, clean).
+  `git add` turned svg-eli5 into a mode-160000 gitlink — caught by the
+  `git diff --cached --summary` guard, unstaged, both gitignored.
+- `fiftybox-cc-execute/scripts/cc_preflight.py` is a mode-120000 symlink; its
+  blob is a path string. Canonical content is committed at
+  `fiftybox-execute/scripts/cc_preflight.py`, so nothing is lost, but the link is
+  absolute. Recorded in `BACKUP-COVERAGE.md` with a relative-link fix.
+- 7 more entries are symlinks leaving this repo (ego-browser, gpt-image,
+  humanize×3, modal-h3-video, find-skills/orchestration → ~/.agents/skills) —
+  left untracked on purpose and documented.
+- `amazon_login.cjs` is credential-free: it waits for the `at-main` cookie name in
+  the persistent browser profile and persists only `{loggedIn: bool}`.
+
+### Verification
+- every staging step guarded: `git diff --cached --summary | grep -E 'mode 160000|mode 120000'`
+  and a junk/secret name grep, run before each commit
+- gate file untouched throughout: 523 lines, identical to the fiftybox repo copy
+- remote blob size `fiftybox-local/SKILL.md` = 25187 bytes
+
+### Remaining uncommitted in ~/.claude/skills (restore gap, by choice)
+- 11 modified: `orchestrate.py`, `fiftybox-orchestration/SKILL.md`,
+  `fiftybox-execute/SKILL.md`, `ideate`, `open-design`, `opencode-implement/*`, …
+- 18 deleted: retired `orchestrate/`, `pi-execute/`, `local-small/`,
+  `fiftybox-local-execute/`
+- 8 symlinks (documented)
+- `sprite-gen/` needs its own private repo — its local commits exist nowhere else
