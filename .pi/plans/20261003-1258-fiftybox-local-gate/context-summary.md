@@ -299,3 +299,25 @@ Append-only. Each block is written from live command output, not from memory.
 - Mac Studio 11235/11234 down: the gate's runtime effect is unverified.
 - Review wave F1–F4 not dispatched (offered as a user choice).
 - Nested scratch repo `.pi/plans/<ts>/scratch/gate-probe/` still on disk.
+
+## Commit & Push - 2026-10-03 13:14 (user requested)
+
+### Completed
+- fiftybox repo `c43842a` — SKILL.md gate + this plan dir (16 files, +1021/-9),
+  pushed to origin/main `eefe7bc..c43842a` (fast-forward, now 0/0 in sync).
+- `~/.claude/skills` split into two commits so the gate diff stays readable:
+  `63b255b` carries the **pre-existing** 299→395-line Gemma4 executor revision
+  that was never committed in that repo, `b17917e` is the gate (395→523,
+  +137/-9).
+
+### Current Truth
+- `~/.claude/skills` has **no remote configured** — push is impossible there; the
+  two commits are local-only.
+- Both SKILL.md copies byte-identical at 523 lines; neither shows dirty.
+- Excluded on purpose: `.pi/plans/<ts>/scratch/` (nested git repo),
+  `.sisyphus/` (opencode state), and 68 pre-existing dirty files in
+  `~/.claude/skills`.
+
+### Open Risks
+- Runtime copy is unpushed — a machine rebuild from the GitHub repo alone would
+  still lose the gate for the Claude runtime path.
