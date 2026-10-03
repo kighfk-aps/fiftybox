@@ -376,3 +376,39 @@ Append-only. Each block is written from live command output, not from memory.
   `fiftybox-local-execute/`
 - 8 symlinks (documented)
 - `sprite-gen/` needs its own private repo — its local commits exist nowhere else
+
+## Mirror closed — deletions + modifications pushed - 2026-10-03 13:45
+
+### Completed
+- `6acd148` chore(skills): retirement of orchestrate / pi-execute / local-small /
+  fiftybox-local-execute + obsolete fiftybox-local scripts — **18 files, 0 insertions**
+- `b60a8ba` feat(skills): live engine + skill revisions — **11 files, +919/-504**
+- pushed; `myfiftybox` HEAD `b60a8ba` == origin, tree 289 → 257 entries
+  (18 files removed + 14 emptied directories)
+
+### Current Truth
+- 5 of the 11 modified files were **byte-identical to this fiftybox repo's
+  copies** (`orchestrate.py` 158,878B, `fiftybox-execute/SKILL.md` 29,671B,
+  `fiftybox-orchestration/SKILL.md`, `config.example.json`,
+  `fiftybox-plans/SKILL.md`) — the mirror was stale, not divergent.
+- 6 are runtime-only and existed nowhere else until now: `ideate/SKILL.md`,
+  `open-design/SKILL.md`, `opencode-implement/spec.md`, `workflow.md`, and the
+  two `claude_opencode_implement.py` (`--agent-name` default Codex → OpenCode).
+- All 18 deleted files verified readable at `HEAD~2` before committing the
+  deletion — recoverable, not destroyed.
+- `python3 -m py_compile` passes on `orchestrate.py` and both
+  `claude_opencode_implement.py`.
+- `orchestrate/config.json` is the only survivor of the retired directory and is
+  ignored by `*/config.json` — never staged.
+- Working tree now clean except the 8 documented symlinks.
+
+### Verification
+- `git diff --cached --summary | grep -E 'mode 160000|mode 120000'` → 0 before each commit
+- secret scan on added diff lines only (`git diff -U0 | grep '^+'`) → 0 hits
+- remote spot check by size: orchestrate.py 158,878 == local; SKILL.md 29,671 == local
+
+### Remaining uncovered
+- 8 symlinks whose targets live outside the repo (`~/.agents/skills`, `~/.codex/skills`,
+  `~/.claude/tools/im-not-ai`, `~/.local/share/...`) — listed in `BACKUP-COVERAGE.md`
+- `sprite-gen/` — embedded repo with local commits that exist nowhere else; needs
+  its own private repo
