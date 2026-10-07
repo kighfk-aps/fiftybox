@@ -1,12 +1,12 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on the fixed local executor — Mac Studio Gemma4-26B-A4B QAT 4-bit (mlx-serve over Tailscale, co-resident with Qwen3.8-27B 8-bit) via Pi CLI — sequential TDD with no discovery and no model switching. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on the fixed local executor — Mac Studio Qwen3.8-Flash-Next oQ4e-mtp (oMLX over Tailscale, co-resident lanes: Qwen3.8-27B 8-bit, Gemma4-26B-A4B) via Pi CLI — sequential TDD with no discovery and no model switching. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
 
-구현 페이즈를 맥스튜디오(Mac Studio M4 Max 128GB) mlx-serve 서버의
-Gemma4-26B-A4B(QAT 4-bit)로만 돌린다. **executor는 고정이다** — 후보 탐색,
+구현 페이즈를 맥스튜디오(Mac Studio M4 Max 128GB) oMLX 서버(8000번)의
+Qwen3.8-Flash-Next(oQ4e-mtp)로만 돌린다. **executor는 고정이다** — 후보 탐색,
 폴백 순서, 모델 교체가 모두 없다.
 
 **핵심 루프:** 오케스트레이터(Claude/Codex)가 실패하는 테스트 작성(Red) → 로컬
@@ -14,7 +14,7 @@ Gemma4-26B-A4B(QAT 4-bit)로만 돌린다. **executor는 고정이다** — 후�
 
 **실행 방식:** 순차. 모델이 하나뿐이므로 병렬 디스패치가 없다 — 태스크를 한
 줄씩, 앞 태스크의 리뷰가 끝나면 다음 태스크를 디스패치한다. 각 태스크는
-[`Gemma4 실행 예산`](#gemma4-실행-예산) 상한 안에서만 디스패치된다.
+[`Flash-Next 실행 예산`](#flash-next-실행-예산) 상한 안에서만 디스패치된다.
 
 ---
 
@@ -45,23 +45,28 @@ provider/model 플래그가 없다 — executor가 고정이기 때문이다.
 | 항목 | 값 |
 |---|---|
 | `IMPL_AGENT`(`--implement-agent`) | `pi` |
-| `IMPL_PROVIDER`(`--provider`) | `macstudio-gemma4` |
-| `IMPL_MODEL`(`--model`) | `mlx-community--gemma-4-26B-A4B-it-qat-4bit` |
+| `IMPL_PROVIDER`(`--provider`) | `macstudio-qwen-flash-next` |
+| `IMPL_MODEL`(`--model`) | `Jundot--Qwen3.8-Flash-Next-oQ4e-mtp` |
 | `IMPL_TIMEOUT`(`--implementation-timeout`) | `1800` |
 
 모든 디스패치(implement·재시도·deploy)에 이 네 값을 **전부** 넘긴다.
 `--implement-agent`는 에이전트 레지스트리 키(`pi`)만 받는다. `--provider`를
 빠뜨리면 기본값 `opencode-go`로 조용히 나가므로 반드시 명시한다.
 
-**백엔드 실체:** Pi `~/.pi/agent/models.json`의 `macstudio-gemma4` →
-`http://100.115.199.115:11235/v1`(맥스튜디오 Tailscale IP, mlx-serve 26.9.6).
-**인증이 없다** — `apiKey`는 더미 `EMPTY`고 Bearer 헤더 불필요. 컨텍스트
-262,144, max tokens 16,384. 같은 호스트의 11234번(Qwen3.8-27B 8-bit)은 **별도
-mlx-serve 프로세스**다 — 서로 독립이라 한쪽 재시작이 다른 쪽에 영향을 주지
-않는다. 컨텍스트가 넓어도 태스크 프롬프트와 design.md 발췌는 간결하게 유지한다.
-서버 운용 기록은 `~/Desktop/develop-a/local-model/`(모델 전환·평가 리포트).
+**백엔드 실체:** Pi `~/.pi/agent/models.json`의 `macstudio-qwen-flash-next` →
+`http://100.115.199.115:8000/v1`(맥스튜디오 Tailscale IP, oMLX).
+**인증이 필요하다** — `apiKey`는 키파일 `~/.config/opencode/macstudio-omlx.key`를
+가리키고(oMLX 0.7.0rc1+는 Tailscale 바인드 시 API 키 필수), 모든 curl에
+`Authorization: Bearer $(cat ~/.config/opencode/macstudio-omlx.key)`를 붙인다.
+컨텍스트 262,144, max tokens 16,384. 같은 호스트의 11234번(Qwen3.8-27B 8-bit)·
+11235번(Gemma4)은 **별도 mlx-serve 프로세스**다 — 서로 독립이라 한쪽 재시작이
+다른 쪽에 영향을 주지 않는다. 단 Flash-Next(oMLX)는 상주 약 75GB라 다른 레인과
+동시 구동 시 메모리를 경합한다(8bit 31GB·Gemma4 16GB와 합치면 128GB 초과) —
+preflight에서 다른 레인이 떠 있으면 경고하고 사용자에게 묻는다. 컨텍스트가 넓어도
+태스크 프롬프트와 design.md 발췌는 간결하게 유지한다.
+서버 운용 기록은 `~/Desktop/code/local-model/`(모델 전환·평가 리포트).
 
-### Gemma4 실행 예산
+### Flash-Next 실행 예산
 
 executor가 한 번의 디스패치로 처리할 수 있는 입력 크기의 정량 상한이다. 태스크는
 디스패치 전에 이 예산을 통과해야 한다.
@@ -83,16 +88,18 @@ executor가 한 번의 디스패치로 처리할 수 있는 입력 크기의 정
 **병목:** 컨텍스트는 262,144지만 `max_tokens`가 **16,384**라 **출력이 먼저** 막힌다.
 `IMPL_TIMEOUT`은 `1800`초. 컨텍스트가 남는다고 태스크를 키우지 않는다.
 
-**Calibration:** Step 6의 `gemma4-metrics.md`에 태스크별 실측을 누적한다. 최근
+**Calibration:** Step 6의 `executor-metrics.md`에 태스크별 실측을 누적한다. 최근
 5태스크 성공률 < 80% → `DESIGN_MD_MAX_LINES` 60→45, `PROMPT_MAX_LINES` 120→100.
 10태스크 연속 100% → `DESIGN_MD_MAX_LINES` 60→70, `PROMPT_MAX_LINES` 120→140.
 조정은 누적 실측을 보여주고 **사용자 승인 후** 반영한다. 임의로 바꾸지 않는다.
+(주: 상한은 gemma4 실측에서 유래했고 Flash-Next 전환 후 실측이 쌓이면
+Calibration 규칙에 따라 재조정한다.)
 
 ### 설정 게이트
 
 시작 전에 `~/.claude/fiftybox-config.json`을 읽는다(`/fiftybox-config` 스킬이
-관리한다). `providers.pi.backends.macstudio-gemma4.models`의
-`mlx-community--gemma-4-26B-A4B-it-qat-4bit`이 꺼져 있으면 중단하고
+관리한다). `providers.pi.backends.macstudio-qwen-flash-next.models`의
+`Jundot--Qwen3.8-Flash-Next-oQ4e-mtp`이 꺼져 있거나 없으면 중단하고
 `/fiftybox-config`로 켜라고 안내한다. config 파일이 없으면 기본값(켜짐)으로
 진행한다.
 
@@ -100,65 +107,70 @@ executor가 한 번의 디스패치로 처리할 수 있는 입력 크기의 정
 
 ## 맥스튜디오 서버 preflight
 
-11235번 mlx-serve는 Gemma4-26B-A4B를 단독 서빙하는 **launchd 관리 상시
-서버**다. 배치 디스패치, 실패 재시도, Phase 7b deploy — **디스패치 앞에
-매번** 아래 1번 헬스체크를 한다. `200`이면 나머지 단계는 건너뛴다(웜업은
-실행당 1회).
+8000번 oMLX는 Qwen3.8-Flash-Next oQ4e-mtp를 단독 서빙하는 **brew 서비스**다
+(`omlx start`/`omlx stop` — launchd 플레인이 아니다). 배치 디스패치, 실패
+재시도, Phase 7b deploy — **디스패치 앞에 매번** 아래 1번 헬스체크를 한다.
+`200`이면 나머지 단계는 건너뛴다(웜업은 실행당 1회).
 
-1. **헬스체크(인증 없음):**
+1. **헬스체크(Bearer 인증):**
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-  http://100.115.199.115:11235/v1/models
+  -H "Authorization: Bearer $(cat ~/.config/opencode/macstudio-omlx.key)" \
+  http://100.115.199.115:8000/v1/models
 ```
 
 - `200` → 서버·모델 정상. 이번 실행에서 웜업(5번)을 아직 안 했으면 5번만
   한다.
+- `401` → 서버는 살아 있으나 인증 실패. 키파일
+  `~/.config/opencode/macstudio-omlx.key`가 없거나 스튜디오
+  `~/.omlx/settings.json`의 `auth.api_key`와 값이 갈라진 것이다. 중단하고
+  보고한다 — 임의로 키를 재발급하지 않는다.
 - 연결 실패 → 2번으로 간다.
 
 2. **`200`이 아니면 스튜디오 상태 확인(SSH):**
 
 ```bash
 ssh -o BatchMode=yes -o ConnectTimeout=10 tanpapa@100.115.199.115 \
-  'source ~/.zprofile 2>/dev/null; echo ---11235---;
-   lsof -nP -iTCP:11235 -sTCP:LISTEN; echo ---11234---;
-   lsof -nP -iTCP:11234 -sTCP:LISTEN; echo ---8000---;
-   lsof -nP -iTCP:8000 -sTCP:LISTEN'
+  'source ~/.zprofile 2>/dev/null; echo ---8000---;
+   lsof -nP -iTCP:8000 -sTCP:LISTEN; echo ---11234---;
+   lsof -nP -iTCP:11234 -sTCP:LISTEN; echo ---11235---;
+   lsof -nP -iTCP:11235 -sTCP:LISTEN'
 ```
 
-- SSH 실패 → 스튜디오가 꺼져 있거나 오프라인. 중단하고 보고한다.
-- **8000번(oMLX)이 LISTEN이면 경고만 한다** — oMLX는 휴면 중이어야 정상이며,
-  떠 있으면 Flash/Q4까지 메모리를 잡아 11235와 경합한다. 사용자에게 알리고
-  임의로 끄지 않는다.
-- 11234번은 8bit 상주 레인(정상 상태). 끄지 않는다.
-- 11235번이 LISTEN인데 1번 체크가 실패하면 로그 확인:
-  `ssh tanpapa@100.115.199.115 'tail -20 ~/mlx-serve-gemma4.log'`
+- SSH 실패 → 스튜디오가 꺼져 있거나 오프라인. **서버 기동(3번)도 SSH가
+  필요하므로** 중단하고 사용자에게 보고한다.
+- 11234번(8bit)·11235번(Gemma4)은 mlx-serve 상주 레인이다. Flash-Next는
+  상주 약 75GB라 **동시 구동하면 128GB를 넘긴다** — 떠 있으면 사용자에게
+  알리고 어느 쪽을 내릴지 묻는다. 임의로 끄지 않는다.
+- 8000번이 LISTEN인데 1번 체크가 200이 아니면 로그 확인:
+  `ssh tanpapa@100.115.199.115 'source ~/.zprofile 2>/dev/null; omlx status'`
 
-3. **서버 기동(11235번이 죽어 있을 때만):** launchd로 관리된다.
+3. **서버 기동(8000번이 죽어 있을 때만):** brew 서비스로 관리된다.
 
 ```bash
 ssh -o BatchMode=yes tanpapa@100.115.199.115 \
-  'launchctl kickstart -k gui/$(id -u)/com.tanpapa.mlx-gemma4'
+  'source ~/.zprofile 2>/dev/null; omlx start'
 ```
 
-플레인이 없으면 수동 기동(**`source ~/.zprofile`을 빼면 non-interactive
-SSH에서 mlx-serve를 못 찾는다**):
-
-```bash
-ssh -o BatchMode=yes tanpapa@100.115.199.115 \
-  'source ~/.zprofile; nohup mlx-serve --model ~/.omlx/models/mlx-community--gemma-4-26B-A4B-it-qat-4bit --serve --host 100.115.199.115 --port 11235 --ctx-size 262144 >> ~/mlx-serve-gemma4.log 2>&1 &'
-```
+`omlx start`는 `~/.omlx/settings.json`의 `server.host`/`server.port` 설정을
+따른다. PATH에 `omlx`가 없으면 `brew services start omlx`도 된다. **수동
+`omlx serve` 포그라운드는 쓰지 않는다** — API 키가 비어 있으면 백그라운드
+기동 시 확인 프롬프트에 응답자가 없어 "Startup canceled"로 조용히 죽는다(키가
+설정돼 있으면 프롬프트 없이 뜬다).
 
 이 스킬이 서버를 새로 띄웠는지 기록해 둔다.
 
-4. **폴링:** 30초 간격으로 최대 16회(8분). 로그는
-`ssh tanpapa@100.115.199.115 'tail -20 ~/mlx-serve-gemma4.log'`로 본다.
+4. **폴링:** 30초 간격으로 최대 16회(8분). PLE n-gram 표를 SSD mmap으로
+   읽는 구성이라 콜드 부팅 시 첫 로드에 수 분 걸릴 수 있다.
 
 ```bash
+key="$(cat ~/.config/opencode/macstudio-omlx.key)"
 for i in $(seq 1 16); do
   sleep 30
   code="$(curl -s -o /dev/null -w '%{http_code}' --max-time 10 \
-    http://100.115.199.115:11235/v1/models || true)"
+    -H "Authorization: Bearer $key" \
+    http://100.115.199.115:8000/v1/models || true)"
   echo "boot-check $((i*30))s: ${code:-<empty>}"
   if [ "$code" = "200" ]; then echo READY; break; fi
 done
@@ -167,14 +179,15 @@ done
 8분 안에 `200`이 아니면 디스패치하지 않고 `server`로 분류해 보고한다.
 모델 교체를 제안하지 않는다 — executor가 하나뿐이다.
 
-5. **Gemma4 웜업(실행당 1회):** 모델은 서버 기동 시 로드되므로 lazy-load
+5. **Flash-Next 웜업(실행당 1회):** 모델은 서버 기동 시 로드되므로 lazy-load
    대기는 필요 없다. 첫 디스패치 직전 생성 경로 확인을 1회만:
 
 ```bash
 curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
+  -H "Authorization: Bearer $(cat ~/.config/opencode/macstudio-omlx.key)" \
   -H 'Content-Type: application/json' \
-  -d '{"model":"mlx-community--gemma-4-26B-A4B-it-qat-4bit","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
-  http://100.115.199.115:11235/v1/chat/completions
+  -d '{"model":"Jundot--Qwen3.8-Flash-Next-oQ4e-mtp","messages":[{"role":"user","content":"hi"}],"max_tokens":1}' \
+  http://100.115.199.115:8000/v1/chat/completions
 ```
 
 `200`이면 READY. 타임아웃 시 30초 뒤 한 번 더 한다. 두 번째까지 실패하면
@@ -220,7 +233,7 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
   2개로** 분할하고, 하프별 Red 테스트를 Step 4를 준용해 다시 쓴 뒤 **첫 하프부터
   순차로** 재디스패치한다. 이는 원 태스크의 1회 재시도 예산을 소비한다. 하프까지
   실패하면 사용자에게 선택지를 제시한다.
-- `too_long` → 입력이 [`Gemma4 실행 예산`](#gemma4-실행-예산)을 넘긴 상태다.
+- `too_long` → 입력이 [`Flash-Next 실행 예산`](#flash-next-실행-예산)을 넘긴 상태다.
   넘친 항목을 줄인다 — design이면 Step 1 실행계약 압축, 명세면 Step 3 하프
   분할 — Step 5의 dry-run 게이트를 다시 통과시킨 뒤 재디스패치한다. 재시도는
   태스크당 1회 예산 안에서 한다. timeout 값을 올리는 것으로 해결하지 않는다.
@@ -242,7 +255,7 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 ```markdown
 **Task N 실패**
 
-**레인:** pi/macstudio-gemma4/mlx-community--gemma-4-26B-A4B-it-qat-4bit
+**레인:** pi/macstudio-qwen-flash-next/Jundot--Qwen3.8-Flash-Next-oQ4e-mtp
 **분류:** <server | model | timeout | too_long | no_changes | orchestrate | unknown>
 **근거:** <.out 로그에서 인용한 줄 + EXIT_CODE>
 **예산 점검:** <spec N줄 / files N개 / design N줄 / prompt N줄 — 상한 초과 여부>
@@ -285,27 +298,27 @@ curl -s -o /dev/null -w '%{http_code}\n' --max-time 120 \
 ```bash
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase setup --task "<작업>" --cwd "$(pwd)" \
-  --implement-agent pi --provider macstudio-gemma4
+  --implement-agent pi --provider macstudio-qwen-flash-next
 ```
 
 setup은 에이전트 레지스트리 키(`pi`)와 `pi --list-models
-macstudio-gemma4` preflight를 검증한다. JSON 출력에서 `artifactDir`과
+macstudio-qwen-flash-next` preflight를 검증한다. JSON 출력에서 `artifactDir`과
 `worktree`를 챙긴다. 설계 문서를 복사하고 고정 3축을
 `<artifactDir>/model-choice.json`에 기록한다(감사 로그 — 이번 실행 내내 이
 한 줄뿐이며 교체는 일어나지 않는다).
 
 ### Step 3: 태스크 분해 (순차)
 
-분해하기 전에 먼저 [`Gemma4 실행 예산`](#gemma4-실행-예산) 표를 연다. 아래 상한은
+분해하기 전에 먼저 [`Flash-Next 실행 예산`](#flash-next-실행-예산) 표를 연다. 아래 상한은
 그 예산에서 온 것이다. 설계를 원자적 구현 단위로 쪼개 순차 목록으로 만든다:
 
 ```markdown
 ## Tasks (순차 — executor 1개 고정)
 
-1. Task A → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
+1. Task A → pi / macstudio-qwen-flash-next / Jundot--Qwen3.8-Flash-Next-oQ4e-mtp
    Modify ONLY: src/probe.py
    lines: spec 9
-2. Task B → pi / macstudio-gemma4 / mlx-community--gemma-4-26B-A4B-it-qat-4bit
+2. Task B → pi / macstudio-qwen-flash-next / Jundot--Qwen3.8-Flash-Next-oQ4e-mtp
    Modify ONLY: src/probe.py, tests/test_probe.py
    lines: spec 12
 ```
@@ -347,8 +360,8 @@ orchestrate.py가 다중 태스크 모드로 처리한다. 호출 1회 = 태스�
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent pi --provider macstudio-gemma4 \
-  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800 --skip-verify \
+  --implement-agent pi --provider macstudio-qwen-flash-next \
+  --model Jundot--Qwen3.8-Flash-Next-oQ4e-mtp --implementation-timeout 1800 --skip-verify \
   --dry-run
 
 wc -l "<artifactDir>/implement-prompt.md"
@@ -376,8 +389,8 @@ nohup bash -c '
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase implement --task "<task>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent pi --provider macstudio-gemma4 \
-  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800 --skip-verify
+  --implement-agent pi --provider macstudio-qwen-flash-next \
+  --model Jundot--Qwen3.8-Flash-Next-oQ4e-mtp --implementation-timeout 1800 --skip-verify
 echo "EXIT_CODE=$?"
 ' > "<artifactDir>/implement-task-N.out" 2>&1 &
 ```
@@ -422,7 +435,7 @@ Advisory diff 리뷰는 `fiftybox-execute`와 동일한 자연어 opt-in 트리�
 
 #### 실행 메트릭 기록
 
-태스크가 이 리뷰 게이트를 통과하면 `<artifactDir>/gemma4-metrics.md`에 행을
+태스크가 이 리뷰 게이트를 통과하면 `<artifactDir>/executor-metrics.md`에 행을
 append한다. 다음 태스크의 상한 판단과 calibration 근거는 이 표다.
 
 | task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과 |
@@ -436,7 +449,7 @@ append한다. 다음 태스크의 상한 판단과 calibration 근거는 이 표
 - **changedFiles** — `summary.json`의 `changedFiles` 개수
 - **결과** — `success` / `retry` / `split` / `failed`
 
-이 표를 누적해서 [`Gemma4 실행 예산`](#gemma4-실행-예산)의 Calibration 규칙
+이 표를 누적해서 [`Flash-Next 실행 예산`](#flash-next-실행-예산)의 Calibration 규칙
 (최근 5태스크 성공률 < 80% → 하향, 10태스크 연속 100% → 상향)을 평가한다.
 상한 조정은 표를 보여주고 사용자 승인한 뒤에 반영한다.
 
@@ -467,8 +480,8 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --phase deploy --task "<작업>" --cwd "$(pwd)" \
   --artifact-dir "<artifactDir>" \
-  --implement-agent pi --provider macstudio-gemma4 \
-  --model mlx-community--gemma-4-26B-A4B-it-qat-4bit --implementation-timeout 1800
+  --implement-agent pi --provider macstudio-qwen-flash-next \
+  --model Jundot--Qwen3.8-Flash-Next-oQ4e-mtp --implementation-timeout 1800
 ```
 
 ### Step 10: Cleanup (Phase 8)
@@ -479,10 +492,11 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   --artifact-dir "<artifactDir>"
 ```
 
-`summary.json`의 최종 상태를 보고한다. **11234/11235번 mlx-serve는 임의로
-끄지 않는다** — 각각 8bit·Gemma4의 상시 서버이며 다른 세션·레인이 사용 중일
-수 있다. 두 포트는 독립 프로세스라 예전 oMLX처럼 함께 내려가지 않는다.
-8000번 oMLX는 휴면이 정상 — 떠 있으면 사용자에게 알리기만 한다.
+`summary.json`의 최종 상태를 보고한다. **어떤 포트도 임의로 끄지 않는다** —
+11234(8bit)·11235(Gemma4)는 mlx-serve 상시 서버, 8000(oMLX)은 이 스킬의
+executor 서버로, 다른 세션·레인이 사용 중일 수 있다. 세 포트는 독립
+프로세스지만 8000번이 떠 있는 상태에서 11234/11235번을 추가로 올리면 메모리가
+넘치니 [preflight](#맥스튜디오-서버-preflight)의 경합 확인을 따른다.
 
 ---
 
@@ -501,7 +515,7 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
 
 - **Claude/Codex 오케스트레이터는 구현 코드를 직접 쓰지 않는다.** 계획서
   내용, 속도, 모델 상태와 무관하다
-- **executor는 `pi`/`macstudio-gemma4`/`mlx-community--gemma-4-26B-A4B-it-qat-4bit`로 고정이다.**
+- **executor는 `pi`/`macstudio-qwen-flash-next`/`Jundot--Qwen3.8-Flash-Next-oQ4e-mtp`로 고정이다.**
   어떤 실패·속도 문제도 모델이나 provider를 바꾸지 않는다. 유료 모델·원격
   무료 모델로 전환하지 않는다
 - provider는 테스트 파일을 수정하지 않는다. 수정했으면 되돌리고 재실행한다
@@ -509,9 +523,10 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py \
   유효하다
 - `--implement-agent`에는 에이전트 이름만, `--provider`에는 백엔드 이름만
   넣는다 — [Executor (고정)](#executor-고정) 표 참고
-- **디스패치 앞에 매번 서버 preflight 헬스체크를 한다.** 11235번은 launchd
-  관리 상시 서버다 — 이 스킬이 임의로 끄거나 재시작하지 않는다. 8000번
-  oMLX(휴면 예정)가 떠 있으면 알리고 임의로 끄지 않는다
+- **디스패치 앞에 매번 서버 preflight 헬스체크를 한다(Bearer 인증).** 8000번
+  oMLX는 brew 서비스 상시 서버다 — 이 스킬이 임의로 끄거나 재시작하지 않는다.
+  11234/11235번 mlx-serve 레인이 같이 떠 있으면 메모리 경합이므로 알리고 임의로
+  끄지 않는다
 - `--phase implement`는 항상 detached로 돌리고 `EXIT_CODE=` sentinel을 남긴다
 - `task-batches.md`에 ```json 태스크 블록을 넣지 않는다
 - 실패 분류는 [실패 처리](#실패-처리) 표로만 한다

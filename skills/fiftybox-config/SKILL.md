@@ -81,5 +81,5 @@ description: fiftybox-execute/fiftybox-local이 쓰는 CLI provider(Pi, Codex, C
 이 스킬은 설정을 저장하기만 한다. 실제로 이 설정을 읽어 preflight를
 건너뛰거나 lane/후보 풀을 재배정하는 것은 `/fiftybox-execute`와
 `/fiftybox-local` 쪽 책임이다. `/fiftybox-local`의 기본 레인은
-`macstudio-gemma4/mlx-community--gemma-4-26B-A4B-it-qat-4bit`(mlx-serve
-:11235)이고, `macstudio-qwen38-27b`(11234 8-bit)는 선택 레인으로 남는다.
+`macstudio-qwen-flash-next/Jundot--Qwen3.8-Flash-Next-oQ4e-mtp`(oMLX :8000)이고,
+`macstudio-qwen38-27b`(11234 8-bit)·`macstudio-gemma4`(11235)는 선택 레인으로 남는다.
