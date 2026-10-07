@@ -20,6 +20,9 @@
         "macstudio-qwen38-27b": {
           "models": { "qwen38-27b-8bit": true }
         },
+        "macstudio-qwen-flash-next": {
+          "models": { "Jundot--Qwen3.8-Flash-Next-oQ4e-mtp": true }
+        },
         "macstudio-gemma4": {
           "models": { "mlx-community--gemma-4-26B-A4B-it-qat-4bit": true }
         },
