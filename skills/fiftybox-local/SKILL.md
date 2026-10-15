@@ -35,7 +35,7 @@ orchestrate.py가 실패하면 사용자에게 보고한다. 대신 구현하지
 /fiftybox-local "<작업 설명>"        /fiftybox-local --resume <artifactDir>        $fiftybox-local "<작업 설명>"
 ```
 
-provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않는다(벤치마크 전용, [reference.md](reference.md)).
+provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않는다(예외 레인은 [reference.md](reference.md)).
 
 ## Executor (고정)
 
@@ -52,8 +52,13 @@ provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않�
 **백엔드:** Pi `~/.pi/agent/models.json`의 `macstudio-qwen-flash-next` → `http://100.115.199.115:8000/v1`
 (oMLX, brew 서비스). **Bearer 인증 필수** — 키는 `~/.config/opencode/macstudio-omlx.key`. 컨텍스트 262,144,
 max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로세스이고, Flash-Next는 상주
-약 75GB라 동시 구동하면 메모리를 경합한다 — 떠 있으면 알리고 어느 쪽을 내릴지 묻는다.
-**어떤 포트도 임의로 끄지 않는다.** 서버 기동·점검 절차는 [reference.md](reference.md).
+약 75GB라 동시 구동하면 메모리를 경합한다 — oMLX memory guard는 `aggressive` tier(다른 레인 메모리
+절반을 압축기로 동원, `~/.omlx/settings.json`)라 Gemma4가 idle로 떠 있어도 램 여유가 있으면 작업이
+시작된다. tier를 임의로 되돌리지 않는다. 어떤 포트도 임의로 끄지 않는다. 서버 절차는 [reference.md](reference.md).
+
+**ioh 대체 레인:** 스튜디오 8000번이 장기 불가일 때만 `--executor iq3s`로 같은 계열 모델
+(ioh PC `qwen3.8-flash-next-iq3_s`, 키 없음, 컨텍스트 65,536, Pi provider명 `ioh`)을 쓴다.
+실사용은 사용자 지시가 있을 때만이다([reference.md](reference.md)).
 
 ### 실행 예산
 

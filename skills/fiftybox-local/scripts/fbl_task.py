@@ -57,6 +57,11 @@ EXECUTORS = {
     "gemma4": Executor(
         "gemma4", "macstudio-gemma4", "mlx-community--gemma-4-26B-A4B-it-qat-4bit",
         "http://100.115.199.115:11235", False, design_max=60, prompt_max=120),
+    # ioh PC lane (llama.cpp Strata, ctx 65536, no auth) — user-directed
+    # fallback while the studio lane is down; same model family as flash-next.
+    "iq3s": Executor(
+        "iq3s", "ioh", "qwen3.8-flash-next-iq3_s",
+        "http://100.126.254.22:8080", False, design_max=70, prompt_max=140),
 }
 DEFAULT_EXECUTOR = "flash-next"
 
@@ -684,8 +689,8 @@ def wait_for_done(path: Path, max_seconds: float, poll: float = 5.0) -> dict:
 def _executor(name: str) -> Executor:
     ex = EXECUTORS[name]
     if name != DEFAULT_EXECUTOR:
-        print(f"WARN=executor {name} is benchmark-only; the skill executor is {DEFAULT_EXECUTOR}",
-              file=sys.stderr)
+        print(f"WARN=executor {name} is not the skill default ({DEFAULT_EXECUTOR}); "
+              f"see reference.md before using it for real work", file=sys.stderr)
     return ex
 
 

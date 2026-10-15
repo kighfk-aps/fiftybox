@@ -26,6 +26,9 @@
         "macstudio-gemma4": {
           "models": { "mlx-community--gemma-4-26B-A4B-it-qat-4bit": true }
         },
+        "ioh": {
+          "models": { "qwen3.8-flash-next-iq3_s": true }
+        },
         "modal-qwen38": {
           "models": { "qwen3.8-27b-q4_k_m": true }
         },

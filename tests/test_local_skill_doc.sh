@@ -56,6 +56,11 @@ has "$SKILL" "임의로 끄지 않는다" "SKILL.md never shuts down the residen
 # gemma4 is a benchmark-only lane and must not leak into the skill contract
 lacks "$SKILL" "macstudio-gemma4" "SKILL.md does not advertise the benchmark-only gemma4 lane"
 
+# the ioh lane is documented as an exception lane, not the default
+has "$SKILL" "iq3s" "SKILL.md names the ioh iq3s exception lane"
+has "$SKILL" "장기 불가" "SKILL.md gates the ioh lane on the studio lane being down"
+has "$REF" "예외 레인: ioh" "reference.md documents the ioh exception lane"
+
 # size guard: the skill is re-read on every orchestrator turn
 LINES=$(wc -l < "$SKILL" | tr -d ' ')
 if [[ "$LINES" -le 230 ]]; then pass "SKILL.md is $LINES lines (<= 230)"; else fail "SKILL.md is $LINES lines (> 230)"; fi

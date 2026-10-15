@@ -69,6 +69,14 @@ class ConstantsTest(unittest.TestCase):
         self.assertFalse(ex.needs_key)
         self.assertEqual((ex.design_max, ex.prompt_max), (60, 120))
 
+    def test_ioh_iq3s_executor_is_keyless_and_shares_flash_next_budget(self):
+        ex = fbl.EXECUTORS["iq3s"]
+        self.assertEqual(ex.provider, "ioh")
+        self.assertEqual(ex.model, "qwen3.8-flash-next-iq3_s")
+        self.assertEqual(ex.base_url, "http://100.126.254.22:8080")
+        self.assertFalse(ex.needs_key)
+        self.assertEqual((ex.design_max, ex.prompt_max), (70, 140))
+
     def test_flash_next_budget_was_raised_after_forty_clean_tasks(self):
         ex = fbl.EXECUTORS["flash-next"]
         self.assertEqual((ex.design_max, ex.prompt_max), (70, 140))

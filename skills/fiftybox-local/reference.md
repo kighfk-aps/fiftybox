@@ -33,6 +33,15 @@ ssh -o BatchMode=yes tanpapa@100.115.199.115 'source ~/.zprofile 2>/dev/null; om
 
 웜업(첫 생성 경로 확인)은 `preflight`가 실행당 1회 자동으로 한다(`A/.fbl/warmed`).
 
+### memory guard tier
+
+`~/.omlx/settings.json`의 `memory.memory_guard_tier`는 **aggressive**로 고정한다(2026-10-16).
+`safe`였을 때 Gemma4(11235번)가 idle로 떠 있기만 해도 동적 ceiling이 77.5GB까지 내려가 109K 토큰
+prefill이 400으로 거부됐다(10/15 로그). aggressive는 다른 프로세스 메모리의 절반을 macOS 압축기로
+돌릴 수 있다고 보고 예약을 16GB→4GB로 줄여 ceiling을 ~108GB로 유지한다 — 램에 실제 여유가 있으면
+작업이 시작된다. hard watermark 도달 시 요청 중단·모델 퇴출은 tier와 무관하게 일어나므로
+동시 구동은 여전히 경합이다. tier를 되돌리려면 사용자 승인이 필요하다.
+
 ## 실패 분류 근거
 
 `fbl_task.py`의 `classify_failure`가 `A/implement-task-N.out`(마지막 줄 `EXIT_CODE=`)로 분류한다.
@@ -69,9 +78,16 @@ ssh -o BatchMode=yes tanpapa@100.115.199.115 'source ~/.zprofile 2>/dev/null; om
 ## benchmark-only: gemma4 레인
 
 `fbl_task.py --executor gemma4`는 `macstudio-gemma4`(11235번, 키 없음)로 같은 루프를 돌린다. 스킬의
-executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=...benchmark-only` 출력). Flash-Next가
+executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=`가 뜬다). Flash-Next가
 꺼져 있어도 11235번이 떠 있으면 토큰 절감 효과를 재 볼 수 있어서 둔 옵션이다. 실사용 작업에 쓰지 않는다.
 측정 도구는 `tests/bench/token_bench.py`.
+
+## 예외 레인: ioh iq3_s
+
+`fbl_task.py --executor iq3s`는 ioh PC(Tailscale `100.126.254.22:8080`, llama.cpp Strata, 키 없음)의
+`qwen3.8-flash-next-iq3_s`로 같은 루프를 돌린다. Flash-Next와 같은 모델 계열이라 예산(70/140)을 공유한다.
+컨텍스트가 65,536으로 좁으니 긴 design/intent는 더 압축한다. **스튜디오 8000번이 장기 불가하고 사용자가
+지시했을 때만** 쓴다 — 기본 전환이 아니다. Pi provider명은 `ioh`(스튜디오·맥미니 동일).
 
 ## 근거 실측
 
