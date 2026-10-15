@@ -1,0 +1,65 @@
+#!/bin/zsh
+# fbl_resume — one-word resume for a fiftybox-local artifact dir.
+#
+# Prepares "/fiftybox-local --resume <abs artifactDir>" and, when run inside
+# tmux, launches a fresh ccdx (GLM) pane on it (CLAUDE.md: add a pane to the
+# existing tmux session instead of opening a new terminal window). Outside
+# tmux it just prints the command to run. FBLR_DRY_RUN=1 always prints only.
+
+set -u
+
+readonly self="fblr"
+readonly ccdx_bin="${FBLR_CCDX_BIN:-$HOME/bin/ccdx}"
+
+# Resolve the artifact dir: explicit argument, else the newest dir under
+# .omx/artifacts/orchestrate/ that actually contains design.md.
+resolve_dir() {
+  local given="$1" candidate
+  if [[ -n "$given" ]]; then
+    if [[ ! -d "$given" ]]; then
+      print -u2 "${self}: artifact dir not found: ${given}"
+      return 1
+    fi
+    candidate="$(cd "$given" && pwd -P)"
+  else
+    candidate="$(pwd -P)"
+    local root
+    for root in .omx/artifacts/orchestrate; do
+      if [[ ! -d "$candidate/$root" ]]; then
+        print -u2 "${self}: no .omx/artifacts/orchestrate under ${candidate} — pass an artifact dir or run from the repo root."
+        return 1
+      fi
+    done
+    candidate="$(find "$candidate/.omx/artifacts/orchestrate" -mindepth 1 -maxdepth 1 -type d -exec test -e '{}/design.md' \; -print 2>/dev/null | sort -r | head -1)"
+    if [[ -z "$candidate" ]]; then
+      print -u2 "${self}: no artifact dir with design.md under .omx/artifacts/orchestrate — nothing to resume."
+      return 1
+    fi
+    candidate="$(cd "$candidate" && pwd -P)"
+  fi
+  if [[ ! -e "$candidate/design.md" ]]; then
+    print -u2 "${self}: ${candidate} has no design.md — not a resumable fiftybox-local artifact dir."
+    return 1
+  fi
+  REPLY="$candidate"
+}
+
+resolve_dir "${1:-}" || exit 1
+artifact_dir="$REPLY"
+resume_prompt="/fiftybox-local --resume ${artifact_dir}"
+
+if [[ "${FBLR_DRY_RUN:-}" == "1" || -z "${TMUX:-}" ]]; then
+  print "${ccdx_bin} --dangerously-skip-permissions \"${resume_prompt}\""
+  [[ "${FBLR_DRY_RUN:-}" == "1" ]] && exit 0
+  print -u2 "${self}: not inside tmux — run the command above (or: /fiftybox-local --resume ${artifact_dir} in any session)."
+  exit 0
+fi
+
+# Inside tmux: open a new pane running ccdx with the resume prompt.
+if [[ ! -x "$ccdx_bin" ]]; then
+  print -u2 "${self}: ${ccdx_bin} not found — set FBLR_CCDX_BIN."
+  print -u2 "${self}: resume manually: /fiftybox-local --resume ${artifact_dir}"
+  exit 1
+fi
+tmux split-window -h "${ccdx_bin} --dangerously-skip-permissions \"${resume_prompt}\""
+print -u2 "${self}: resumed ${artifact_dir} in a new tmux pane."

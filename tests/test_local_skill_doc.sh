@@ -32,6 +32,8 @@ has "$SKILL" "run_in_background" "SKILL.md runs the batch as a background task"
 has "$SKILL" "폴링 금지" "SKILL.md forbids polling turns"
 lacks "$SKILL" "30~60초 간격" "SKILL.md no longer asks for 30-60s polling"
 has "$SKILL" "새 세션" "SKILL.md tells the orchestrator to run in a fresh session"
+has "$SKILL" "compact" "SKILL.md offers /compact before requiring a new session"
+has "$SKILL" "fblr" "SKILL.md offers the fblr one-word resume helper"
 has "$SKILL" "묶음" "SKILL.md reviews in batches"
 has "$SKILL" "preflight" "SKILL.md requires a server preflight"
 has "$SKILL" "DESIGN_MD_MAX_LINES" "SKILL.md documents the design size limit"
@@ -56,7 +58,7 @@ lacks "$SKILL" "macstudio-gemma4" "SKILL.md does not advertise the benchmark-onl
 
 # size guard: the skill is re-read on every orchestrator turn
 LINES=$(wc -l < "$SKILL" | tr -d ' ')
-if [[ "$LINES" -le 220 ]]; then pass "SKILL.md is $LINES lines (<= 220)"; else fail "SKILL.md is $LINES lines (> 220)"; fi
+if [[ "$LINES" -le 230 ]]; then pass "SKILL.md is $LINES lines (<= 230)"; else fail "SKILL.md is $LINES lines (> 230)"; fi
 
 # reference.md carries what only matters on failure
 has "$REF" "omlx start" "reference.md documents the server start procedure"

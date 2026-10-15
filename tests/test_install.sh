@@ -114,6 +114,14 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "fiftybox-local skill installed" \
     || fail "fiftybox-local skill not installed"
 
+[[ -f "$LOCAL_SKILL_DIR/scripts/fbl_resume" ]] \
+    && pass "fbl_resume helper installed" \
+    || fail "fbl_resume helper not installed"
+
+[[ -x "$LOCAL_SKILL_DIR/scripts/fbl_resume" ]] \
+    && pass "fbl_resume helper is executable" \
+    || fail "fbl_resume helper is not executable"
+
 [[ ! -e "$LOCAL_SKILL_DIR/scripts/discover_free_models.py" && ! -e "$LOCAL_SKILL_DIR/scripts/discover_openrouter_free.py" ]] \
     && pass "fiftybox-local stale discovery scripts removed" \
     || fail "fiftybox-local stale discovery scripts still installed"

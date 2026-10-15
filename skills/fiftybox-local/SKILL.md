@@ -21,7 +21,7 @@ Sonnet $0.4~0.5). 그래서:
    변조/범위/skip/외국문자 검사·메트릭 기록.
 2. **폴링 금지.** 폴링 한 번 = 대화 전체 재읽기. 배경 실행 후 알림을 기다린다.
 3. 리뷰는 **묶음당 1회**(최대 5태스크): `VERDICT` 줄 → 주석 뺀 `diff` 1회.
-4. **새 세션에서 실행한다**([Step 0](#step-0-세션-위생)). 스크립트가 이미 출력한 값을 다시 확인하지 않는다.
+4. **세션 위생을 지킨다**([Step 0](#step-0-세션-위생)). 스크립트가 이미 출력한 값을 다시 확인하지 않는다.
 
 ## ⛔ 절대 금지
 
@@ -83,9 +83,14 @@ max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로
 ### Step 0: 세션 위생
 
 이 대화에 이미 다른 작업이 쌓여 있으면(수만 토큰 이상) **준비(Step 1~4)까지만 하고 멈춘다.**
-`python3 $FBL status --artifact-dir A`로 확인한 뒤 한 줄만 안내한다: "새 세션에서
-`/fiftybox-local --resume A` — 실행 루프는 Sonnet 세션 권장". 모든 실행 상태는 `A` 아래 파일에 있어서
-새 세션이 `status` 한 번으로 이어받는다. `--resume A`로 호출됐으면 Step 1~4를 건너뛰고 `status`부터 한다.
+`python3 $FBL status --artifact-dir A`로 확인한 뒤, 세션 종류에 따라 한 줄만 안내한다:
+
+- **ccdx(GLM) 세션** — 그대로 `/compact` 후 이 세션에서 `/fiftybox-local --resume A` 실행.
+  모든 실행 상태는 `A` 아래 파일에 있어 compact 요약이 잃을 게 없다.
+- **원본 Claude(유료) 세션** — 새 세션으로 넘긴다: `fblr A`(인자 생략 시 최신 A 자동 선택)가
+  새 tmux pane에 resume 세션까지 띄운다. 스크립트는 `scripts/fbl_resume`.
+
+`--resume A`로 호출됐으면 Step 1~4를 건너뛰고 `status`부터 한다.
 
 ### Step 1: 설계 수집
 
