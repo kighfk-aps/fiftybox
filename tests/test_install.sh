@@ -130,6 +130,18 @@ bash "$SCRIPT_DIR/install.sh" >/dev/null 2>&1
     && pass "Codex fiftybox-local OpenAI metadata installed" \
     || fail "Codex fiftybox-local OpenAI metadata not installed"
 
+[[ -f "$LOCAL_SKILL_DIR/scripts/fbl_task.py" && -f "$LOCAL_SKILL_DIR/reference.md" ]] \
+    && pass "fiftybox-local batch script and reference installed" \
+    || fail "fiftybox-local batch script or reference not installed"
+
+[[ -f "$CODEX_LOCAL_SKILL_DIR/scripts/fbl_task.py" && -f "$CODEX_LOCAL_SKILL_DIR/reference.md" ]] \
+    && pass "Codex fiftybox-local batch script and reference installed" \
+    || fail "Codex fiftybox-local batch script or reference not installed"
+
+python3 -I "$LOCAL_SKILL_DIR/scripts/fbl_task.py" --help >/dev/null 2>&1 \
+    && pass "installed fbl_task.py runs" \
+    || fail "installed fbl_task.py does not run"
+
 if [[ -f "$SCRIPT_DIR/skills/fiftybox-local-execute/SKILL.md" ]]; then
     [[ -f "$LOCAL_EXECUTE_SKILL_DIR/SKILL.md" ]] \
         && pass "Claude fiftybox-local-execute skill installed" \

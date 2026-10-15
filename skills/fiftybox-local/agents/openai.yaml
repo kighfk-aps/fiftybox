@@ -1,4 +1,4 @@
 name: fiftybox-local
 display_name: Fiftybox Local
-description: Run the Fiftybox TDD pipeline on the fixed local executor — Mac Studio Gemma4-26B-A4B via mlx-serve.
+description: Run the Fiftybox TDD pipeline on the fixed local executor — Mac Studio Qwen3.8-Flash-Next via oMLX, driven by one batch script to keep orchestrator token use low.
 default_prompt: '$fiftybox-local "implement the requested design on the Mac Studio local executor"'

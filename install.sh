@@ -108,10 +108,15 @@ for stale_dir in "$LOCAL_SKILL_DIR/scripts" "$CODEX_LOCAL_SKILL_DIR/scripts"; do
     rmdir "$stale_dir" 2>/dev/null || true
   fi
 done
+mkdir -p "$LOCAL_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$LOCAL_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/reference.md" "$LOCAL_SKILL_DIR/reference.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/fbl_task.py" "$LOCAL_SKILL_DIR/scripts/fbl_task.py"
 log "Installed Claude skill fiftybox-local → $LOCAL_SKILL_DIR"
-mkdir -p "$CODEX_LOCAL_SKILL_DIR/agents"
+mkdir -p "$CODEX_LOCAL_SKILL_DIR/agents" "$CODEX_LOCAL_SKILL_DIR/scripts"
 cp "$SCRIPT_DIR/skills/fiftybox-local/SKILL.md" "$CODEX_LOCAL_SKILL_DIR/SKILL.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/reference.md" "$CODEX_LOCAL_SKILL_DIR/reference.md"
+cp "$SCRIPT_DIR/skills/fiftybox-local/scripts/fbl_task.py" "$CODEX_LOCAL_SKILL_DIR/scripts/fbl_task.py"
 cp "$SCRIPT_DIR/skills/fiftybox-local/agents/openai.yaml" "$CODEX_LOCAL_SKILL_DIR/agents/openai.yaml"
 log "Installed Codex skill fiftybox-local → $CODEX_LOCAL_SKILL_DIR"
 
