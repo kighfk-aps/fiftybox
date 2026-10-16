@@ -974,15 +974,27 @@ def working_hashes(root: Path, paths: list[str]) -> dict[str, str]:
     return hashes
 
 
+def _untracked_paths(root: Path) -> list[str]:
+    """Untracked files, excluding gitignored ones (mirrors repo_snapshot)."""
+    result = run(["git", "ls-files", "--others", "--exclude-standard"], root)
+    if result.returncode != 0:
+        return []
+    return [line for line in result.stdout.splitlines() if line]
+
+
 def dirty_baseline(root: Path) -> dict[str, str]:
-    """Content hashes of every tracked file that already differs from HEAD.
+    """Content hashes of every tracked file that already differs from HEAD,
+    plus every untracked file.
 
     Taken before an agent runs so that changed_files can tell the agent's
     edits apart from work that was already sitting in the worktree — the Red
     phase test edits the skill asks Claude to make, most of all. Untracked
-    files are not included here; repo_snapshot already covers those.
+    files carry hashes too: an in-place edit of an already-untracked file
+    (a prior task's new file) changes no path set, so only the content
+    comparison can see it.
     """
-    return working_hashes(root, _dirty_paths(root))
+    paths = _dirty_paths(root) + _untracked_paths(root)
+    return working_hashes(root, sorted(set(paths)))
 
 
 def changed_files(root: Path, before_files: set[str] | None = None,

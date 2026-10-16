@@ -1962,11 +1962,14 @@ def test_dirty_baseline_includes_staged_modification():
         assert "tracked.txt" in orchestrate.dirty_baseline(root)
 
 
-def test_dirty_baseline_ignores_untracked_files():
+def test_dirty_baseline_includes_untracked_files():
+    """untracked 도 해시 기준선에 들어간다 — 제자리 수정 감지의 전제."""
     with tempfile.TemporaryDirectory() as tmp:
         root = _plain_repo(Path(tmp))
         (root / "brand-new.txt").write_text("new\n")
-        assert orchestrate.dirty_baseline(root) == {}
+        baseline = orchestrate.dirty_baseline(root)
+        assert set(baseline) == {"brand-new.txt"}
+        assert baseline["brand-new.txt"] != orchestrate.DIRTY_MISSING
 
 
 def test_dirty_baseline_marks_deleted_file_missing():
@@ -2258,6 +2261,41 @@ def _solo_repo(base: Path) -> tuple[Path, Path]:
     )
     subprocess.run(["git", "checkout", "-q", "-b", "parked"], cwd=root, check=True)
     return root, worktree
+
+
+def test_changed_files_detects_in_place_edits_of_untracked_files():
+    """task-8 재발 방지: 이미 untracked 인 파일을 제자리에서 고치면 잡혀야 한다.
+
+    changed_files() 가 untracked 를 경로 집합만 비교하면 이전 태스크가 만든
+    untracked 파일을 다음 태스크가 고쳐도 보이지 않아 no_changes 오탐이 났다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _root, worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        new_file = worktree / "scripts" / "guardian.sh"
+        new_file.parent.mkdir(parents=True)
+        new_file.write_text("v1\n")
+        before_files = orchestrate.repo_snapshot(worktree)
+        before_dirty = orchestrate.dirty_baseline(worktree)
+        new_file.write_text("v2\n")
+        changed = orchestrate.changed_files(worktree, before_files, before_dirty)
+        assert "scripts/guardian.sh" in changed, f"in-place untracked edit invisible: {changed}"
+
+
+def test_changed_files_ignores_untouched_untracked_files():
+    """건드리지 않은 untracked 파일은 changed 에 나오면 안 된다.
+
+    해시 기준선을 untracked 로 확장하면서 오탐이 생기면 안 된다: 새로 생긴
+    파일은 잡고, 그대로인 untracked 파일은 잡지 않는다."""
+    with tempfile.TemporaryDirectory() as tmp:
+        _root, worktree, _artifact_dir = _sandbox_repo(Path(tmp))
+        existing = worktree / "scripts" / "guardian.sh"
+        existing.parent.mkdir(parents=True)
+        existing.write_text("v1\n")
+        before_files = orchestrate.repo_snapshot(worktree)
+        before_dirty = orchestrate.dirty_baseline(worktree)
+        (worktree / "another-new.txt").write_text("created during run\n")
+        changed = orchestrate.changed_files(worktree, before_files, before_dirty)
+        assert "scripts/guardian.sh" not in changed
+        assert "another-new.txt" in changed
 
 
 def test_resolve_merge_ref_uses_origin_main_when_a_remote_exists():
