@@ -2604,3 +2604,81 @@ def test_has_failed_phase_recognizes_fetch_failed_and_local_main_blocked():
 
     local_main_blocked_summary = {"phases": {"complete": {"status": "local_main_blocked"}}}
     assert orchestrate.has_failed_phase(local_main_blocked_summary) is True
+
+
+def _review_summary(artifact: Path, worktree: Path) -> None:
+    (artifact / "summary.json").write_text(
+        json.dumps({"worktree": str(worktree), "phases": {"implement": {"status": "success"}}}),
+        encoding="utf-8",
+    )
+
+
+def test_skip_verification_defaults_false():
+    args = orchestrate.parse_args(
+        ["--phase", "review-test", "--task", "t", "--artifact-dir", "/tmp/x"]
+    )
+    assert args.skip_verification is False
+
+
+def test_review_test_without_skip_still_fails_when_tests_fail(tmp_path):
+    artifact = tmp_path / "artifact"
+    worktree = tmp_path / "work"
+    artifact.mkdir()
+    worktree.mkdir()
+    _review_summary(artifact, worktree)
+    args = orchestrate.parse_args([
+        "--phase", "review-test", "--task", "t",
+        "--artifact-dir", str(artifact),
+        "--test-command", "false",
+        "--skip-codex-review",
+    ])
+    code = orchestrate.phase_review_test(tmp_path, artifact, args)
+    summary = json.loads((artifact / "summary.json").read_text(encoding="utf-8"))
+    phase = summary["phases"]["review_test"]
+    assert code != 0
+    assert phase["status"] == "test_failed"
+    assert phase.get("verificationSkipped") is not True
+
+
+def test_skip_verification_does_not_run_detected_tests(tmp_path):
+    artifact = tmp_path / "artifact"
+    worktree = tmp_path / "work"
+    artifact.mkdir()
+    worktree.mkdir()
+    (worktree / "package.json").write_text(
+        json.dumps({"scripts": {"test": "exit 1"}}), encoding="utf-8"
+    )
+    _review_summary(artifact, worktree)
+    args = orchestrate.parse_args([
+        "--phase", "review-test", "--task", "t",
+        "--artifact-dir", str(artifact),
+        "--skip-verification",
+    ])
+    with patch("orchestrate.run_test_command") as run_tests, \
+         patch("orchestrate.codex_exec") as codex, \
+         patch("orchestrate.detect_test_command") as detect:
+        code = orchestrate.phase_review_test(tmp_path, artifact, args)
+    run_tests.assert_not_called()
+    codex.assert_not_called()
+    detect.assert_not_called()
+    summary = json.loads((artifact / "summary.json").read_text(encoding="utf-8"))
+    phase = summary["phases"]["review_test"]
+    assert code == 0
+    assert phase["status"] == "success"
+    assert phase["verificationSkipped"] is True
+    assert not (artifact / "codex-review.md").exists()
+
+
+def test_commit_line_skips_claim_when_verification_skipped():
+    assert orchestrate.review_test_commit_line({"verificationSkipped": True, "testCommand": "npm test"}) == (
+        "Tested: verification skipped; the user accepts after deploy"
+    )
+
+
+def test_commit_line_keeps_test_claim_otherwise():
+    assert orchestrate.review_test_commit_line({"testCommand": "npm test"}) == (
+        "Tested: Phase 7 review-test passed via npm test"
+    )
+    assert orchestrate.review_test_commit_line({}) == (
+        "Tested: Phase 7 review-test passed via review gate"
+    )

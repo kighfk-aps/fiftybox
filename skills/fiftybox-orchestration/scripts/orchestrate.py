@@ -2612,6 +2612,13 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
     worktree = Path(summary["worktree"])
     is_retry = args.is_retry
     logger = PhaseLogger(artifact_dir, 7, "review-test", is_retry=is_retry)
+    if args.skip_verification and not args.dry_run:
+        logger.start(cmd="verification skipped (--skip-verification)", cwd=str(worktree))
+        logger.finish(0, "verification_skipped")
+        summary["phases"]["review_test"] = phase_record("success", logger, verificationSkipped=True)
+        write_json(artifact_dir / "summary.json", summary)
+        print(json.dumps({"status": "success", "phase": "review-test", "artifactDir": str(artifact_dir)}, ensure_ascii=False, separators=(",", ":")))
+        return 0
     test_command = args.test_command or detect_test_command(worktree)
     review_label = "codex review" if not args.skip_codex_review else "codex review skipped"
     logger.start(cmd=f"{test_command or 'no test command'} + {review_label}", cwd=str(worktree))
@@ -2806,6 +2813,17 @@ def phase_review_test(root: Path, artifact_dir: Path, args: argparse.Namespace) 
     return 0
 
 
+def review_test_commit_line(review_phase: dict) -> str:
+    """Build the Tested: trailer for the complete-phase commit message.
+
+    When verification was skipped, the message must not claim that tests
+    passed — the user accepts the result after deploy instead.
+    """
+    if review_phase.get("verificationSkipped"):
+        return "Tested: verification skipped; the user accepts after deploy"
+    return "Tested: Phase 7 review-test passed via " + (review_phase.get("testCommand") or "review gate")
+
+
 def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> int:
     summary = ensure_summary(artifact_dir)
     worktree = Path(summary["worktree"])
@@ -2870,7 +2888,7 @@ def phase_complete(root: Path, artifact_dir: Path, args: argparse.Namespace) -> 
         "Constraint: Pipeline work must stay isolated in a git worktree until completion\n"
         "Confidence: medium\n"
         "Scope-risk: moderate\n"
-        f"Tested: Phase 7 review-test passed via {summary.get('phases', {}).get('review_test', {}).get('testCommand') or 'review gate'}\n"
+        f"{review_test_commit_line(summary.get('phases', {}).get('review_test', {}))}\n"
         "Not-tested: Live remote push behavior beyond git push exit status\n"
     )
     commit_result = run(["git", "commit", "-m", commit_msg], worktree)
@@ -3533,6 +3551,13 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "invoked. Used by callers (e.g. fiftybox-execute) whose own review step "
             "already covers spec compliance without Codex."
         ),
+    )
+    parser.add_argument(
+        "--skip-verification",
+        action="store_true",
+        help="Skip the test command and the reviewer in review-test, record "
+        "review_test success with verificationSkipped, and do not claim tests "
+        "passed.",
     )
     parser.add_argument("--feedback", default="", help="Codex feedback for retry")
     parser.add_argument("--dry-run", action="store_true")
