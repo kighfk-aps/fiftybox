@@ -57,7 +57,7 @@ EXECUTORS = {
     "gemma4": Executor(
         "gemma4", "macstudio-gemma4", "mlx-community--gemma-4-26B-A4B-it-qat-4bit",
         "http://100.115.199.115:11235", False, design_max=60, prompt_max=120),
-    # ioh PC lane (llama.cpp Strata, ctx 65536, no auth) — user-directed
+    # ioh PC lane (llama.cpp Strata, ctx 131072, no auth) — user-directed
     # fallback while the studio lane is down; same model family as flash-next.
     "iq3s": Executor(
         "iq3s", "ioh", "qwen3.8-flash-next-iq3_s",

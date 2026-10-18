@@ -86,7 +86,7 @@ executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=`�
 
 `fbl_task.py --executor iq3s`는 ioh PC(Tailscale `100.126.254.22:8080`, llama.cpp Strata, 키 없음)의
 `qwen3.8-flash-next-iq3_s`로 같은 루프를 돌린다. Flash-Next와 같은 모델 계열이라 예산(70/140)을 공유한다.
-컨텍스트가 65,536으로 좁으니 긴 design/intent는 더 압축한다. **스튜디오 8000번이 장기 불가하고 사용자가
+컨텍스트가 131,072로 스튜디오(262,144)보다 좁으니 긴 design/intent는 더 압축한다. **스튜디오 8000번이 장기 불가하고 사용자가
 지시했을 때만** 쓴다 — 기본 전환이 아니다. Pi provider명은 `ioh`(스튜디오·맥미니 동일).
 
 ## 근거 실측

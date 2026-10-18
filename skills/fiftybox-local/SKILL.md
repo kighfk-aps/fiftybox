@@ -57,7 +57,7 @@ max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로
 시작된다. tier를 임의로 되돌리지 않는다. 어떤 포트도 임의로 끄지 않는다. 서버 절차는 [reference.md](reference.md).
 
 **ioh 대체 레인:** 스튜디오 8000번이 장기 불가일 때만 `--executor iq3s`로 같은 계열 모델
-(ioh PC `qwen3.8-flash-next-iq3_s`, 키 없음, 컨텍스트 65,536, Pi provider명 `ioh`)을 쓴다.
+(ioh PC `qwen3.8-flash-next-iq3_s`, 키 없음, 컨텍스트 131,072, Pi provider명 `ioh`)을 쓴다.
 실사용은 사용자 지시가 있을 때만이다([reference.md](reference.md)).
 
 ### 실행 예산
