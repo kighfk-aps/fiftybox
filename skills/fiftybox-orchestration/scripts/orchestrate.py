@@ -3569,7 +3569,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Timeout for the explore phase. Exploration is agentic (many tool-call "
         "rounds) and can outlast the generic --agent-timeout on large repos.",
     )
-    parser.add_argument("--implementation-timeout", type=int, default=600)
+    parser.add_argument("--implementation-timeout", type=int, default=1800)
     parser.add_argument("--test-timeout", type=int, default=300)
     parser.add_argument(
         "--auto-resume",
