@@ -16,10 +16,13 @@ import argparse
 import dataclasses
 import json
 import os
+import queue
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import threading
 import time
 import unicodedata
 import urllib.error
@@ -57,13 +60,17 @@ EXECUTORS = {
     "gemma4": Executor(
         "gemma4", "macstudio-gemma4", "mlx-community--gemma-4-26B-A4B-it-qat-4bit",
         "http://100.115.199.115:11235", False, design_max=60, prompt_max=120),
-    # ioh PC lane (llama.cpp Strata, ctx 131072, no auth) — user-directed
-    # fallback while the studio lane is down; same model family as flash-next.
+    # ioh PC lane (llama.cpp Strata, ctx 131072, no auth) — same model family
+    # as flash-next; dispatched by the lane pool whenever it answers health.
     "iq3s": Executor(
         "iq3s", "ioh", "qwen3.8-flash-next-iq3_s",
         "http://100.126.254.22:8080", False, design_max=70, prompt_max=140),
 }
 DEFAULT_EXECUTOR = "flash-next"
+# Local lane pool: the studio is preferred (higher quantization, bigger ctx);
+# gemma4 stays out (benchmark-only). Each lane keeps its own Executor budget.
+LANE_POOL = ("flash-next", "iq3s")
+LANE_SYNC_DIRS = ("node_modules", ".venv", "venv")
 
 HEAVY_DIRS = ("node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".worktrees", ".git")
 TEST_DIRS = ("tests", "test", "__tests__")
@@ -112,8 +119,19 @@ def parse_owned(spec: str) -> list[str]:
     return ticked or ([rest] if rest else [])
 
 
+def parse_depends(spec: str, tid: int, batch: list[int]) -> set[int]:
+    """Depends: none → independent; no Depends: line → all earlier batch tasks."""
+    m = re.search(r"^\**Depends:?\**\s*(.*)$", spec, re.M)
+    if not m:
+        return {i for i in batch if i < tid}
+    value = m.group(1).strip()
+    if value.lower() == "none":
+        return set()
+    return {int(x) for x in re.findall(r"\d+", value)}
+
+
 def classify_failure(text: str, exit_code: int | None, over_budget: bool) -> str:
-    if re.search(r"Connection refused|Failed to connect|ECONNREFUSED|502 Bad Gateway|"
+    if re.search(r"LANE_HEALTH_LOST|Connection refused|Failed to connect|ECONNREFUSED|502 Bad Gateway|"
                  r"unexpected EOF|connection (?:reset|closed)", text, re.I):
         return "server"
     if re.search(r"unknown model|model[_ ]not[_ ]found|(?:http|status|error)[^\n]{0,15}\b(?:404|410)\b",
@@ -285,15 +303,19 @@ def budget_violations(design_lines: int, spec_lines: int, files: int, intent_lin
 # ---------- metrics ----------
 
 METRICS_HEADER = "| task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과 |\n|---|---|---|---|---|---|\n"
+METRICS_HEADER_LANE = "| task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과 | lane |\n|---|---|---|---|---|---|---|\n"
 
 
 def append_metrics(path: Path, task: str, spec: int, prompt: int, seconds: int, changed: int,
-                   result: str) -> None:
+                   result: str, lane: str | None = None) -> None:
     new = not path.exists() or path.stat().st_size == 0
     with path.open("a", encoding="utf-8") as f:
         if new:
-            f.write(METRICS_HEADER)
-        f.write(f"| {task} | {spec} | {prompt} | {seconds}s | {changed} | {result} |\n")
+            f.write(METRICS_HEADER if lane is None else METRICS_HEADER_LANE)
+        row = f"| {task} | {spec} | {prompt} | {seconds}s | {changed} | {result} |"
+        if lane is not None:
+            row += f" {lane} |"
+        f.write(row + "\n")
 
 
 def parse_metrics(text: str) -> list[dict]:
@@ -304,7 +326,9 @@ def parse_metrics(text: str) -> list[dict]:
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) < 6 or cells[0] == "task" or all(re.fullmatch(r"-+", c) for c in cells):
             continue
-        rows.append(dict(zip(("task", "spec", "prompt", "duration", "changed", "result"), cells)))
+        row = dict(zip(("task", "spec", "prompt", "duration", "changed", "result", "lane"), cells))
+        row.setdefault("lane", "flash-next")  # rows predating the lane column
+        rows.append(row)
     return rows
 
 
@@ -324,6 +348,16 @@ def calibrate(rows: list[dict]) -> dict:
     else:
         advice = "KEEP"
     return {"n": len(rows), "streak": streak, "last5_rate": rate, "advice": advice}
+
+
+def calibrate_by_lane(rows: list[dict]) -> dict[str, dict]:
+    """calibrate() per lane; moved rows are infrastructure, not model failures."""
+    by_lane: dict[str, list[dict]] = {}
+    for r in rows:
+        if r.get("result", "").startswith("moved"):
+            continue
+        by_lane.setdefault(r.get("lane", "flash-next"), []).append(r)
+    return {lane: calibrate(rs) for lane, rs in sorted(by_lane.items())}
 
 
 # ---------- server ----------
@@ -423,10 +457,140 @@ def diff_trees(worktree: Path, a: str, b: str, include_tests: bool = False) -> s
     return "\n".join(kept) + ("\n" if kept else "")
 
 
+# ---------- pool helpers ----------
+
+def task_paths(spec: str, staged: Path) -> set[str]:
+    """Files a task owns: Modify ONLY paths plus its staged Red test files."""
+    paths = {p[2:] if p.startswith("./") else p for p in parse_owned(spec)}
+    if staged.is_dir():
+        for f in staged.rglob("*"):
+            if f.is_file() and "__pycache__" not in f.parts:
+                paths.add(f.relative_to(staged).as_posix())
+    return paths
+
+
+def pick_task(queue_: list[int], deps: dict[int, set[int]], done: set[int], busy: set[str],
+              paths: dict[int, set[str]]) -> int | None:
+    """First queued task whose deps are CLEAN and whose paths don't overlap busy."""
+    for tid in queue_:
+        if not deps.get(tid, set()) <= done:
+            continue
+        if paths.get(tid, set()) & busy:
+            continue
+        return tid
+    return None
+
+
+def live_lanes(names: list[str], health: Callable[[Executor], int]) -> list[str]:
+    """Names whose health check is 200, ordered by LANE_POOL preference."""
+    unknown = [n for n in names if n not in EXECUTORS]
+    if unknown:
+        raise ValueError(f"unknown lane: {unknown[0]}")
+    live = [n for n in names if health(EXECUTORS[n]) == 200]
+    return sorted(live, key=lambda n: LANE_POOL.index(n) if n in LANE_POOL else len(LANE_POOL))
+
+
+def create_lane_worktree(main_wt: Path, path: Path) -> Path:
+    """Make (or reuse) a detached worktree and share heavy dependency dirs."""
+    main_wt, path = Path(main_wt).resolve(), Path(path)
+    listing = _git(main_wt, "worktree", "list", "--porcelain")
+    known = {ln.split(" ", 1)[1] for ln in listing.splitlines() if ln.startswith("worktree ")}
+    if str(path.resolve()) not in known:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        _git(main_wt, "worktree", "add", "--detach", str(path), "HEAD")
+    for d in LANE_SYNC_DIRS:
+        src, dst = main_wt / d, path / d
+        if (src.is_dir() or src.is_symlink()) and not dst.exists():
+            dst.symlink_to(src)
+    return path
+
+
+def remove_lane_worktree(main_wt: Path, path: Path) -> bool:
+    try:
+        _git(Path(main_wt), "worktree", "remove", "--force", str(path))
+        _git(Path(main_wt), "worktree", "prune")
+        return True
+    except (RuntimeError, OSError, subprocess.SubprocessError):
+        return False
+
+
+def sync_lane(lane_wt: Path, main_wt: Path, index_path: Path) -> str:
+    """Reset the lane worktree to the main worktree's current (uncommitted) state."""
+    tree = snapshot_tree(Path(main_wt), index_path)
+    _git(lane_wt, "read-tree", "-u", "--reset", tree)
+    _git(lane_wt, "clean", "-fdq", *[f"-e{d}" for d in LANE_SYNC_DIRS])
+    return tree
+
+
+def overlay_paths(wt: Path, tree: str, paths: set[str]) -> list[str]:
+    """Restore the owned files recorded in a tree; silently skip missing ones."""
+    done: list[str] = []
+    for p in sorted(paths):
+        probe = subprocess.run(["git", "-C", str(wt), "cat-file", "-e", f"{tree}:{p}"],
+                               capture_output=True)
+        if probe.returncode == 0:
+            _git(wt, "checkout", tree, "--", p)
+            done.append(p)
+    return done
+
+
+def merge_paths(src_wt: Path, dst_wt: Path, paths: set[str]) -> list[str]:
+    """Copy src files into dst; a path gone from src is deleted from dst."""
+    touched: list[str] = []
+    for p in sorted(paths):
+        src, dst = Path(src_wt) / p, Path(dst_wt) / p
+        if src.is_file():
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
+            touched.append(p)
+        elif dst.exists() or dst.is_symlink():
+            if dst.is_dir() and not dst.is_symlink():
+                shutil.rmtree(dst)
+            else:
+                dst.unlink()
+            touched.append(p)
+    return touched
+
+
+def make_lane_dir(a: Path, lane: str, lane_wt: Path) -> Path:
+    """Per-lane artifact dir so orchestrate.py --phase implement sees one worktree."""
+    a = Path(a)
+    d = a / "lanes" / lane
+    d.mkdir(parents=True, exist_ok=True)
+    summary: dict = {"worktree": str(lane_wt),
+                     "phases": {"setup": {"status": "success"}},
+                     "files": {}}
+    try:
+        desc = json.loads((a / "summary.json").read_text(encoding="utf-8")).get("taskDescription")
+        if desc is not None:
+            summary["taskDescription"] = desc
+    except (OSError, ValueError):
+        pass
+    (d / "summary.json").write_text(json.dumps(summary, ensure_ascii=False), encoding="utf-8")
+    for name in ("design.md", "intent-summary.md"):
+        src = a / name
+        if src.exists():
+            shutil.copy2(src, d / name)
+    return d
+
+
 # ---------- dispatch ----------
 
 class OrchestrateDispatcher:
-    """Calls orchestrate.py --phase implement with all four executor values."""
+    """Calls orchestrate.py --phase implement with all four executor values.
+
+    With ``health`` set, implement() also runs a lane watchdog: the child is
+    started in its own process group and lane health is polled every
+    ``interval`` seconds; ``misses`` consecutive non-200 checks kill the child
+    (LANE_HEALTH_LOST, exit code 1) so a silently-dead server is classified
+    ``server`` instead of burning the 1800s timeout.
+    """
+
+    def __init__(self, health: Callable[[], int] | None = None, interval: float = 60,
+                 misses: int = 3):
+        self.health = health
+        self.interval = interval
+        self.misses = misses
 
     def _cmd(self, task_text, artifact_dir, ex, extra):
         root = _git(Path(artifact_dir), "rev-parse", "--show-toplevel").strip()
@@ -449,17 +613,70 @@ class OrchestrateDispatcher:
 
     def implement(self, task_text, artifact_dir, ex, out_path, *, retry_feedback=None) -> int:
         cmd = self._cmd(task_text, artifact_dir, ex, self._retry_args(retry_feedback))
+        if self.health is None:
+            try:
+                res = subprocess.run(cmd, capture_output=True, text=True, timeout=IMPL_TIMEOUT + 120)
+                code, text = res.returncode, res.stdout + res.stderr
+            except subprocess.TimeoutExpired as exc:
+                code = 124
+                text = (exc.stdout or b"").decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
+            Path(out_path).write_text(f"{text}\nEXIT_CODE={code}\n", encoding="utf-8")
+            return code
+        return self._implement_watched(cmd, Path(out_path))
+
+    @staticmethod
+    def _kill_group(proc) -> None:
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=IMPL_TIMEOUT + 120)
-            code, text = res.returncode, res.stdout + res.stderr
-        except subprocess.TimeoutExpired as exc:
-            code = 124
-            text = (exc.stdout or b"").decode(errors="replace") if isinstance(exc.stdout, bytes) else (exc.stdout or "")
-        Path(out_path).write_text(f"{text}\nEXIT_CODE={code}\n", encoding="utf-8")
+            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+        except OSError:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+
+    def _implement_watched(self, cmd, out_path: Path) -> int:
+        deadline = time.time() + IMPL_TIMEOUT + 120
+        code: int | None = None
+        trailer = ""
+        with out_path.open("w", encoding="utf-8") as fh:
+            proc = subprocess.Popen(cmd, stdout=fh, stderr=subprocess.STDOUT,
+                                    start_new_session=True)
+            missed = 0
+            next_check = time.time() + self.interval
+            while code is None:
+                try:
+                    proc.wait(timeout=1.0)
+                    code = proc.returncode
+                    break
+                except subprocess.TimeoutExpired:
+                    pass
+                now = time.time()
+                if now >= deadline:
+                    self._kill_group(proc)
+                    proc.wait()
+                    code = 124
+                    break
+                if now >= next_check:
+                    if self.health() == 200:
+                        missed = 0
+                    else:
+                        missed += 1
+                        if missed >= self.misses:
+                            self._kill_group(proc)
+                            proc.wait()
+                            code = 1
+                            trailer = "LANE_HEALTH_LOST\n"
+                            break
+                    next_check = now + self.interval
+        text = out_path.read_text(encoding="utf-8") if out_path.exists() else ""
+        out_path.write_text(f"{text}{trailer}EXIT_CODE={code}\n", encoding="utf-8")
         return code
 
 
 # ---------- runner ----------
+
+_STATE_LOCK = threading.Lock()
+
 
 @dataclasses.dataclass
 class TaskResult:
@@ -473,15 +690,23 @@ class TaskResult:
     prompt_lines: int = 0
     checks: dict = dataclasses.field(default_factory=dict)
     log_tail: str = ""
+    lane: str | None = None
+    moved: str | None = None
 
 
 def format_result(r: TaskResult) -> str:
     if r.verdict == "STOP":
-        return f"TASK={r.task} VERDICT=STOP STOP={r.stop} DETAIL={r.detail}".replace("\n", " ")
-    parts = [f"TASK={r.task}", f"VERDICT={r.verdict}", f"EXIT={r.exit_code}", f"CLASS={r.klass}",
-             f"SECONDS={r.seconds}", f"PROMPT={r.prompt_lines}"]
-    parts += [f"{k}={v}" for k, v in r.checks.items()]
-    return " ".join(parts)
+        base = f"TASK={r.task} VERDICT=STOP STOP={r.stop} DETAIL={r.detail}".replace("\n", " ")
+    else:
+        parts = [f"TASK={r.task}", f"VERDICT={r.verdict}", f"EXIT={r.exit_code}", f"CLASS={r.klass}",
+                 f"SECONDS={r.seconds}", f"PROMPT={r.prompt_lines}"]
+        parts += [f"{k}={v}" for k, v in r.checks.items()]
+        base = " ".join(parts)
+    if r.lane is not None:
+        base += f" LANE={r.lane}"
+    if r.moved is not None:
+        base += f" MOVED={r.moved}"
+    return base
 
 
 def run_shell(cmd: str, cwd: Path, timeout: int = 600) -> tuple[int, str]:
@@ -502,12 +727,21 @@ class TaskRunner:
                    "Write code and comments in English or Korean only.")
 
     def __init__(self, artifact_dir, executor: Executor, *, dispatcher=None, health=None,
-                 test_command: str | None = None):
+                 test_command: str | None = None, worktree=None, dispatch_dir=None,
+                 lane: str | None = None, count_server_attempts: bool = True):
         self.a = Path(artifact_dir)
         self.ex = executor
         self.dispatcher = dispatcher or OrchestrateDispatcher()
         self.health = health or executor_health
-        self.wt = Path(json.loads((self.a / "summary.json").read_text(encoding="utf-8"))["worktree"])
+        if worktree is not None:
+            self.wt = Path(worktree)
+        else:
+            self.wt = Path(json.loads((self.a / "summary.json").read_text(encoding="utf-8"))["worktree"])
+        # dispatch_dir: per-lane artifact dir in pool mode; fbl state stays in self.a
+        self.dd = Path(dispatch_dir) if dispatch_dir is not None else self.a
+        self.lane = lane
+        self.tag = f"-{lane}" if lane else ""
+        self.count_server_attempts = count_server_attempts
         self.dir = self.a / ".fbl"
         self.dir.mkdir(exist_ok=True)
         cfg_path = self.dir / "config.json"
@@ -550,7 +784,20 @@ class TaskRunner:
 
     # one task ------------------------------------------------------
     def _stop(self, tid: int, stop: str, detail: str = "") -> TaskResult:
-        return TaskResult(tid, "STOP", stop=stop, detail=detail)
+        return TaskResult(tid, "STOP", stop=stop, detail=detail, lane=self.lane)
+
+    def _save_task(self, tid: int, record: dict | None, pre: str | None, post: str | None) -> None:
+        """Merge one task's record into state.json under the lock (thread-safe)."""
+        with _STATE_LOCK:
+            state = self._state()
+            if record is not None:
+                state.setdefault("tasks", {})[str(tid)] = record
+                state["last"] = tid
+            if pre is not None:
+                state.setdefault("pre", {})[str(tid)] = pre
+            if post is not None:
+                state.setdefault("post", {})[str(tid)] = post
+            self._save(state)
 
     def _run_one(self, tid: int, retry_feedback: str | None) -> TaskResult:
         state = self._state()
@@ -581,43 +828,55 @@ class TaskRunner:
         staged = self.a / "tests" / f"task-{tid}"
         if not staged.is_dir() or not any(p.is_file() for p in staged.rglob("*")):
             return self._stop(tid, "NO_RED_TESTS", str(staged))
+        pre: str | None = None
         shutil.copytree(staged, self.wt, dirs_exist_ok=True)
         if retry_feedback is None:
             rc, _ = run_shell(self.test_command, self.wt)
             if rc == 0:
                 return self._stop(tid, "RED_ALREADY_PASSES", "rewrite the Red test")
-            state["pre"][str(tid)] = snapshot_tree(self.wt, self.dir / "idx-pre")
+            pre = snapshot_tree(self.wt, self.dir / f"idx-pre{self.tag}")
+            state["pre"][str(tid)] = pre
 
         task_text = spec.rstrip("\n") + "\n" + "\n".join(self.FIXED_LINES).format(cmd=self.test_command)
-        prompt = self.dispatcher.dry_run(task_text, self.a, self.ex, retry_feedback=retry_feedback)
+        prompt = self.dispatcher.dry_run(task_text, self.dd, self.ex, retry_feedback=retry_feedback)
         prompt_lines = len(Path(prompt).read_text(encoding="utf-8").splitlines())
         if prompt_lines > self.ex.prompt_max:
             return self._stop(tid, "GATE", f"prompt {prompt_lines}>{self.ex.prompt_max}")
 
-        out = self.a / f"implement-task-{tid}{'r' if retry_feedback else ''}.out"
+        out = self.dd / f"implement-task-{tid}{'r' if retry_feedback else ''}{self.tag}.out"
         t0 = time.time()
-        exit_code = self.dispatcher.implement(task_text, self.a, self.ex, out,
+        exit_code = self.dispatcher.implement(task_text, self.dd, self.ex, out,
                                               retry_feedback=retry_feedback)
         seconds = int(time.time() - t0)
         out_text = out.read_text(encoding="utf-8") if out.exists() else ""
-        r = TaskResult(tid, exit_code=exit_code, seconds=seconds, prompt_lines=prompt_lines)
+        r = TaskResult(tid, exit_code=exit_code, seconds=seconds, prompt_lines=prompt_lines,
+                       lane=self.lane)
         row = f"Task {tid}"
+        post: str | None = None
         if exit_code != 0:
             r.klass = classify_failure(out_text, exit_code, over_budget=False)
             r.log_tail = _tail(out_text)
-            result = "retry" if attempt == 1 else "failed"
+            if not self.count_server_attempts and r.klass == "server":
+                result, saved_attempts = "moved", attempts  # a move is not a model retry
+            else:
+                result = "retry" if attempt == 1 else "failed"
+                saved_attempts = attempt
             changed = 0
         else:
-            result, changed = self._check(r, tid, staged, owned, state)
-        append_metrics(self.a / "executor-metrics.md", row, spec_lines, prompt_lines, seconds, changed, result)
-        state["tasks"][str(tid)] = {"verdict": r.verdict, "klass": r.klass, "attempts": attempt}
-        state["last"] = tid
-        self._save(state)
+            result, changed, post = self._check(r, tid, staged, owned, state)
+            saved_attempts = attempt
+        with _STATE_LOCK:
+            append_metrics(self.a / "executor-metrics.md", row, spec_lines, prompt_lines,
+                           seconds, changed, result, lane=self.lane)
+        record = {"verdict": r.verdict, "klass": r.klass, "attempts": saved_attempts}
+        if self.lane:
+            record["lane"] = self.lane
+        self._save_task(tid, record, pre, post)
         return r
 
     def _check(self, r: TaskResult, tid: int, staged: Path, owned: list[str], state: dict):
         rc, test_out = run_shell(self.test_command, self.wt)
-        post = snapshot_tree(self.wt, self.dir / "idx-post")
+        post = snapshot_tree(self.wt, self.dir / f"idx-post{self.tag}")
         pre = state["pre"].get(str(tid)) or post
         code_diff = diff_trees(self.wt, pre, post)
         all_diff = diff_trees(self.wt, pre, post, include_tests=True)
@@ -640,10 +899,206 @@ class TaskRunner:
         }
         if rc != 0:
             r.verdict, r.log_tail = "FAIL", _tail(test_out)
-            return "failed", len(changed)
+            return "failed", len(changed), post
         flagged = any(r.checks[k] != "none" for k in ("TAMPER", "SCOPE", "SKIPS", "SCRIPT"))
         r.verdict = "FLAG" if flagged else "CLEAN"
-        return ("flagged" if flagged else "success"), len(changed)
+        return ("flagged" if flagged else "success"), len(changed), post
+
+
+def _repo_root(wt: Path) -> Path:
+    """The repository's main worktree (first entry of git worktree list)."""
+    first = _git(wt, "worktree", "list", "--porcelain").splitlines()[0]
+    return Path(first.split(" ", 1)[1])
+
+
+class LanePool:
+    """Runs independent tasks on every live local lane at the same time.
+
+    The main thread owns the main worktree: it syncs each lane worktree to the
+    merged main state before every dispatch and merges CLEAN results back.
+    One worker thread per busy lane runs TaskRunner._run_one. A lane that dies
+    (server-class failure or failed pre-dispatch health check) is never
+    re-probed during the run; its in-flight task moves to another lane without
+    spending the retry budget.
+    """
+
+    def __init__(self, artifact_dir, lanes: list[str], *,
+                 dispatcher_factory: Callable[[Executor], object],
+                 health: Callable[[Executor], int], test_command: str | None = None,
+                 interval: float = 60):
+        self.a = Path(artifact_dir)
+        self.lanes = list(lanes)
+        self.dispatcher_factory = dispatcher_factory
+        self.health = health
+        self.test_command = test_command
+        self.interval = interval
+
+    def _read_state(self) -> dict:
+        p = self.a / ".fbl" / "state.json"
+        return json.loads(p.read_text(encoding="utf-8")) if p.exists() else {"tasks": {}, "pre": {}}
+
+    def run(self, ids: list[int], retry_feedback: str | None = None,
+            emit: Callable[[TaskResult], None] | None = None) -> list[TaskResult]:
+        results: list[TaskResult] = []
+
+        def out(r: TaskResult) -> None:
+            results.append(r)
+            if emit:
+                emit(r)
+
+        if not self.lanes:
+            out(TaskResult(ids[0], "STOP", stop="ALL_LANES_DOWN", detail="no live lanes"))
+            return results
+        plain = TaskRunner(self.a, EXECUTORS[self.lanes[0]], health=self.health,
+                           test_command=self.test_command)
+        if plain.test_command is None:
+            out(TaskResult(ids[0], "STOP", stop="NO_TEST_COMMAND", detail="pass --test-command once"))
+            return results
+        main_wt = plain.wt
+        plain._checkpoint(retry=retry_feedback is not None)
+
+        specs = {}
+        for tid in ids:
+            spec_path = self.a / "tasks" / f"task-{tid}.md"
+            specs[tid] = spec_path.read_text(encoding="utf-8") if spec_path.is_file() else ""
+        tasks_state = self._read_state().get("tasks", {})
+        for tid in ids:
+            for dep in parse_depends(specs[tid], tid, ids):
+                if dep not in ids and tasks_state.get(str(dep), {}).get("verdict") != "CLEAN":
+                    out(TaskResult(tid, "STOP", stop="DEPENDS",
+                                   detail=f"task {dep} is not CLEAN in state.json"))
+                    return results
+        deps = {tid: parse_depends(specs[tid], tid, ids) for tid in ids}
+        paths = {tid: task_paths(specs[tid], self.a / "tests" / f"task-{tid}") for tid in ids}
+
+        repo = _repo_root(main_wt)
+        lane_wts: dict[str, Path] = {}
+        lane_dirs: dict[str, Path] = {}
+        for lane in self.lanes:
+            lane_wts[lane] = create_lane_worktree(main_wt, repo / ".worktrees" / f"fbl-{self.a.name}-{lane}")
+            lane_dirs[lane] = make_lane_dir(self.a, lane, lane_wts[lane])
+
+        work_queue: list[int] = list(ids)
+        done: set[int] = set()
+        running: dict[str, int] = {}
+        dead: set[str] = set()
+        moves: dict[int, int] = {}
+        moved_from: dict[int, str] = {}
+        busy: set[str] = set()
+        stop_new = False
+        completions: queue.Queue = queue.Queue()
+
+        def spawn(lane: str, tid: int, runner: TaskRunner, feedback, origin: str | None) -> None:
+            def work() -> None:
+                try:
+                    r = runner._run_one(tid, feedback)
+                except Exception as exc:  # a worker must always report back
+                    r = TaskResult(tid, "FAIL", klass="unknown", detail=f"lane worker crashed: {exc}",
+                                   log_tail=_tail(str(exc)))
+                if origin is not None:
+                    r.moved = f"{origin}->{lane}"
+                completions.put((lane, tid, r))
+            threading.Thread(target=work, daemon=True).start()
+
+        def handle(lane: str, tid: int, r: TaskResult) -> None:
+            nonlocal stop_new, busy
+            running.pop(lane, None)
+            busy -= paths.get(tid, set())
+            if r.verdict == "CLEAN":
+                done.add(tid)
+                st = self._read_state()
+                pre = st.get("pre", {}).get(str(tid))
+                post = st.get("post", {}).get(str(tid))
+                merge = set(paths.get(tid, set()))
+                if pre and post:
+                    raw = diff_trees(lane_wts[lane], pre, post, include_tests=True)
+                    merge |= {p for p, _ in _split_files(raw)}
+                merge_paths(lane_wts[lane], main_wt, merge)
+                out(r)
+                return
+            if r.klass == "server" or r.stop == "PREFLIGHT":
+                dead.add(lane)
+                if moves.get(tid, 0) >= 1:
+                    out(TaskResult(tid, "STOP", stop="MOVE_BUDGET",
+                                   detail=f"moved off {moved_from.get(tid)} once; {lane} died too"))
+                    stop_new = True
+                else:
+                    moves[tid] = moves.get(tid, 0) + 1
+                    moved_from[tid] = lane
+                    work_queue.append(tid)  # back of the queue; no retry budget spent
+                return
+            stop_new = True  # first FLAG/FAIL/STOP that is not a move ends new assignments
+            out(r)
+
+        def dispatch_some() -> bool:
+            nonlocal busy
+            started = False
+            for lane in self.lanes:
+                if stop_new or not work_queue:
+                    break
+                if lane in dead or lane in running:
+                    continue
+                tid = pick_task(work_queue, deps, done, busy, paths)
+                if tid is None:
+                    break  # nothing ready on any idle lane
+                if self.health(EXECUTORS[lane]) != 200:
+                    dead.add(lane)  # task never dispatched: keeps its queue slot, no move
+                    continue
+                sync_lane(lane_wts[lane], main_wt, self.a / ".fbl" / f"idx-lane-{lane}")
+                runner = TaskRunner(self.a, EXECUTORS[lane],
+                                    dispatcher=self.dispatcher_factory(EXECUTORS[lane]),
+                                    health=self.health, worktree=lane_wts[lane],
+                                    dispatch_dir=lane_dirs[lane], lane=lane,
+                                    count_server_attempts=False)
+                if retry_feedback is not None:
+                    staged = self.a / "tests" / f"task-{tid}"
+                    shutil.copytree(staged, lane_wts[lane], dirs_exist_ok=True)
+                    pre = snapshot_tree(lane_wts[lane], self.a / ".fbl" / f"idx-lane-{lane}")
+                    runner._save_task(tid, None, pre, None)
+                    post = self._read_state().get("post", {}).get(str(tid))
+                    if post:
+                        overlay_paths(lane_wts[lane], post, set(parse_owned(specs[tid])))
+                work_queue.remove(tid)
+                running[lane] = tid
+                busy = busy | paths.get(tid, set())
+                spawn(lane, tid, runner, retry_feedback, moved_from.get(tid))
+                started = True
+            return started
+
+        try:
+            while work_queue or running:
+                try:
+                    while True:
+                        handle(*completions.get_nowait())
+                except queue.Empty:
+                    pass
+                if not work_queue and not running:
+                    break
+                dispatch_some()
+                if not running:
+                    if stop_new or not work_queue:
+                        break
+                    if all(lane in dead for lane in self.lanes):
+                        for tid in list(work_queue):
+                            out(TaskResult(tid, "STOP", stop="ALL_LANES_DOWN",
+                                           detail="every lane died during this run"))
+                        work_queue.clear()
+                        break
+                    if pick_task(work_queue, deps, done, busy, paths) is None:
+                        for tid in list(work_queue):
+                            out(TaskResult(tid, "STOP", stop="DEPENDS",
+                                           detail="nothing running and nothing ready"))
+                        work_queue.clear()
+                        break
+                    continue
+                try:
+                    handle(*completions.get(timeout=1.0))
+                except queue.Empty:
+                    pass
+        finally:
+            for lane, wt_path in lane_wts.items():
+                remove_lane_worktree(main_wt, wt_path)
+        return results
 
 
 # ---------- reports ----------
@@ -686,15 +1141,37 @@ def wait_for_done(path: Path, max_seconds: float, poll: float = 5.0) -> dict:
 
 # ---------- CLI ----------
 
-def _executor(name: str) -> Executor:
-    ex = EXECUTORS[name]
-    if name != DEFAULT_EXECUTOR:
+def _executor(name: str | None) -> Executor:
+    ex = EXECUTORS[name or DEFAULT_EXECUTOR]
+    if name and name != DEFAULT_EXECUTOR:
         print(f"WARN=executor {name} is not the skill default ({DEFAULT_EXECUTOR}); "
               f"see reference.md before using it for real work", file=sys.stderr)
     return ex
 
 
-def cmd_preflight(args) -> int:
+def select_mode(lanes_arg: str | None, executor_arg: str | None, health: Callable[[Executor], int],
+                state: dict, ids: list[int]) -> tuple[str, list[str]]:
+    """single | pool | down, plus the lanes to use.
+
+    An explicit --executor keeps the old single-lane path. Otherwise the
+    candidates are --lanes or LANE_POOL, filtered by health: two or more live
+    lanes dispatch in parallel, one live lane stays sequential unless this
+    batch already recorded a lane (a run in progress or moved)."""
+    if executor_arg:
+        return "single", [executor_arg]
+    names = [s.strip() for s in lanes_arg.split(",") if s.strip()] if lanes_arg else list(LANE_POOL)
+    live = live_lanes(names, health)
+    if not live:
+        return "down", []
+    if len(live) >= 2:
+        return "pool", live
+    tasks = (state or {}).get("tasks", {})
+    if any(tasks.get(str(i), {}).get("lane") for i in ids):
+        return "pool", live
+    return "single", live
+
+
+def _preflight_executor(args) -> int:
     ex = _executor(args.executor)
     code = executor_health(ex)
     print(f"EXECUTOR={ex.name} HEALTH={code}")
@@ -720,8 +1197,44 @@ def cmd_preflight(args) -> int:
     return 1
 
 
+def _preflight_pool(args) -> int:
+    """Pool preflight: every lane in LANE_POOL, ok if at least one is up.
+
+    The studio is never auto-started; when ioh alone answers, runs proceed on
+    ioh (see reference.md for the studio start procedure)."""
+    codes = {}
+    for lane in LANE_POOL:
+        codes[lane] = executor_health(EXECUTORS[lane])
+        print(f"LANE={lane} HEALTH={codes[lane]}")
+    live = [lane for lane in LANE_POOL if codes[lane] == 200]
+    for lane in live:
+        marker = "warmed" if lane == "flash-next" else f"warmed-{lane}"
+        warmed = Path(args.artifact_dir, ".fbl", marker) if args.artifact_dir else None
+        if warmed is None or not warmed.exists():
+            wcode = warm_up(EXECUTORS[lane])
+            print(f"WARM={lane}:{'ok' if wcode == 200 else wcode}")
+            if wcode == 200 and warmed is not None:
+                warmed.parent.mkdir(exist_ok=True)
+                warmed.write_text("1", encoding="utf-8")
+    if live:
+        print(f"LANES_UP={','.join(live)}")
+        print("PREFLIGHT=ok")
+        return 0
+    print(f"LANES={probe_lanes()}")
+    if codes.get("flash-next") == 401:
+        print("PREFLIGHT=auth (key file and studio auth.api_key disagree; do not reissue the key)")
+    else:
+        print("PREFLIGHT=down (start procedure: reference.md)")
+    return 1
+
+
+def cmd_preflight(args) -> int:
+    if args.executor:
+        return _preflight_executor(args)
+    return _preflight_pool(args)
+
+
 def cmd_run(args) -> int:
-    ex = _executor(args.executor)
     try:
         ids = parse_task_range(args.tasks)
     except ValueError as exc:
@@ -731,7 +1244,12 @@ def cmd_run(args) -> int:
         a = Path(args.artifact_dir)
         out = a / "fbl-run.out"
         cmd = [sys.executable, str(Path(__file__).resolve()), "run", "--artifact-dir", str(a),
-               "--tasks", args.tasks, "--executor", args.executor, "--emit-done"]
+               "--tasks", args.tasks]
+        if args.executor:
+            cmd += ["--executor", args.executor]
+        if args.lanes:
+            cmd += ["--lanes", args.lanes]
+        cmd.append("--emit-done")
         for flag, val in (("--test-command", args.test_command),
                           ("--retry-feedback-file", args.retry_feedback_file)):
             if val:
@@ -741,7 +1259,13 @@ def cmd_run(args) -> int:
         print(f"DETACHED OUT={out}")
         return 0
     feedback = Path(args.retry_feedback_file).read_text(encoding="utf-8") if args.retry_feedback_file else None
-    runner = TaskRunner(args.artifact_dir, ex, test_command=args.test_command)
+    state_path = Path(args.artifact_dir) / ".fbl" / "state.json"
+    state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    try:
+        mode, lanes = select_mode(args.lanes, args.executor, executor_health, state, ids)
+    except ValueError as exc:
+        print(f"STOP=BAD_LANES DETAIL={exc}")
+        return 2
     shown: list[TaskResult] = []
 
     def emit(r: TaskResult) -> None:
@@ -750,7 +1274,22 @@ def cmd_run(args) -> int:
         if r.log_tail:
             print("\n".join("  | " + l for l in r.log_tail.splitlines()), flush=True)
 
-    results = runner.run(ids, retry_feedback=feedback, emit=emit)
+    if mode == "down":
+        emit(TaskResult(ids[0], "STOP", stop="ALL_LANES_DOWN",
+                        detail="no lane answers health; run preflight"))
+        results = shown
+    elif mode == "pool":
+        def dispatcher_factory(ex: Executor):
+            return OrchestrateDispatcher(health=lambda: executor_health(ex),
+                                         interval=60, misses=3)
+
+        pool = LanePool(args.artifact_dir, lanes, dispatcher_factory=dispatcher_factory,
+                        health=executor_health, test_command=args.test_command, interval=60)
+        results = pool.run(ids, retry_feedback=feedback, emit=emit)
+    else:
+        ex = _executor(args.executor) if args.executor else EXECUTORS[lanes[0]]
+        runner = TaskRunner(args.artifact_dir, ex, test_command=args.test_command)
+        results = runner.run(ids, retry_feedback=feedback, emit=emit)
     if not shown:
         for r in results:
             emit(r)
@@ -785,9 +1324,14 @@ def cmd_calibrate(args) -> int:
     root = Path(args.repo) / ".omx/artifacts/orchestrate"
     for f in sorted(root.glob("*/executor-metrics.md")):
         rows.extend(parse_metrics(f.read_text(encoding="utf-8")))
-    info = calibrate(rows)
-    print(f"N={info['n']} STREAK={info['streak']} LAST5={info['last5_rate']:.2f} ADVICE={info['advice']}")
-    if info["advice"] != "KEEP":
+    lanes = calibrate_by_lane(rows) or {"flash-next": calibrate([])}
+    note = False
+    for lane, info in lanes.items():
+        print(f"LANE={lane} N={info['n']} STREAK={info['streak']} "
+              f"LAST5={info['last5_rate']:.2f} ADVICE={info['advice']}")
+        if info["advice"] != "KEEP":
+            note = True
+    if note:
         print("NOTE=show these rows to the user; change limits only after approval")
     return 0
 
@@ -798,7 +1342,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     def common(sp, executor=True):
         if executor:
-            sp.add_argument("--executor", choices=sorted(EXECUTORS), default=DEFAULT_EXECUTOR)
+            sp.add_argument("--executor", choices=sorted(EXECUTORS), default=None)
 
     sp = sub.add_parser("preflight")
     common(sp)
@@ -807,6 +1351,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("run")
     common(sp)
+    sp.add_argument("--lanes", help="comma-separated lane names from LANE_POOL (default: all)")
     sp.add_argument("--artifact-dir", required=True)
     sp.add_argument("--tasks", required=True)
     sp.add_argument("--test-command")

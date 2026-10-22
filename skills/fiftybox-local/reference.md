@@ -49,6 +49,7 @@ prefill이 400으로 거부됐다(10/15 로그). aggressive는 다른 프로세�
 | 신호 | CLASS |
 |---|---|
 | `Connection refused`, `Failed to connect`, 요청 중 EOF·502 | `server` |
+| `LANE_HEALTH_LOST`(헬스 와치독) | `server` |
 | `Unknown model`, 404/410, 모델 ID 거부 | `model` |
 | `EXIT_CODE=124` | `timeout` |
 | 응답이 `finish_reason: length`로 잘림 | `too_long` |
@@ -62,12 +63,13 @@ prefill이 400으로 거부됐다(10/15 로그). aggressive는 다른 프로세�
 
 ## Calibration
 
-`A/executor-metrics.md`에 태스크마다 `task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과`
-행이 쌓인다(결과: `success`/`retry`/`flagged`/`failed`). `fbl_task.py calibrate --repo R`가 저장소의
-**모든** 실행 기록을 모아 계산한다.
+`A/executor-metrics.md`에 태스크마다 `task | spec 줄수 | prompt 줄수 | duration | changedFiles | 결과 | lane`
+행이 쌓인다(결과: `success`/`retry`/`flagged`/`failed`/`moved`). `fbl_task.py calibrate --repo R`가 저장소의
+**모든** 실행 기록을 모아 **레인별로** 계산한다(옛 6열 행은 `flash-next`로 본다). `moved` 행은 인프라 이동이지
+모델 실패가 아니므로 제외한다. 상수 조정은 여전히 사용자 승인 후에만.
 
-- 최근 5태스크 성공률 < 80% → `ADVICE=DOWN`: design 70→60(또는 60→45), prompt 140→120(또는 120→100).
-- 10태스크 연속 성공 → `ADVICE=UP`: design +10, prompt +20.
+- 레인별 최근 5태스크 성공률 < 80% → `ADVICE=DOWN`: design 70→60(또는 60→45), prompt 140→120(또는 120→100).
+- 레인별 10태스크 연속 성공 → `ADVICE=UP`: design +10, prompt +20.
 - 조정은 누적 행을 사용자에게 보여주고 **승인 후** `fbl_task.py` 상단의 `EXECUTORS` 값과
   SKILL.md 예산 표를 함께 고친다. 임의로 바꾸지 않는다.
 
@@ -82,12 +84,24 @@ executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=`�
 꺼져 있어도 11235번이 떠 있으면 토큰 절감 효과를 재 볼 수 있어서 둔 옵션이다. 실사용 작업에 쓰지 않는다.
 측정 도구는 `tests/bench/token_bench.py`.
 
-## 예외 레인: ioh iq3_s
+## 레인 풀: ioh iq3_s
 
-`fbl_task.py --executor iq3s`는 ioh PC(Tailscale `100.126.254.22:8080`, llama.cpp Strata, 키 없음)의
-`qwen3.8-flash-next-iq3_s`로 같은 루프를 돌린다. Flash-Next와 같은 모델 계열이라 예산(70/140)을 공유한다.
-컨텍스트가 131,072로 스튜디오(262,144)보다 좁으니 긴 design/intent는 더 압축한다. **스튜디오 8000번이 장기 불가하고 사용자가
-지시했을 때만** 쓴다 — 기본 전환이 아니다. Pi provider명은 `ioh`(스튜디오·맥미니 동일).
+`fbl_task.py`의 레인 풀(`LANE_POOL`)은 맥스튜디오 Flash-Next와 ioh PC(Tailscale `100.126.254.22:8080`,
+llama.cpp Strata, 키 없음)의 `qwen3.8-flash-next-iq3_s` 두 레인이다. Pi provider명은 `ioh`다. Flash-Next와
+같은 모델 계열이라 예산(70/140)을 공유한다. 컨텍스트가 131,072로 스튜디오(262,144)보다 좁으니 긴
+design/intent는 더 압축한다. 살아 있는 레인이 둘 이상이면 독립 태스크가 동시에 분배되고, 한쪽만 살아 있으면
+그 레인으로 순차 실행이다. 한 저장소만 쓰려면 `run --lanes flash-next`로 제한한다.
+
+- **생존 판정은 HTTP 응답뿐이다.** 모델 이름 확인을 하지 않는다. ioh가 RAG 때문에 q3s를 내리고 gemma4
+  12b를 올리면 Tailscale이 응답하지 않게 돼 있으므로 그 레인은 조용히 풀에서 빠진다.
+- **이 스킬은 ioh 서버를 기동·종료하지 않는다.** RAG가 쓰는 중이라 방해하지 않는다. 스튜디오 기동 절차만
+  아래(«서버 점검·기동») 그대로 유지된다. 스튜디오가 죽어 있고 ioh만 살아 있으면 ioh로 진행한다.
+- **와치독:** 디스패치 중 60초 간격 헬스체크로 3회 연속 실패하면 프로세스 그룹을 죽이고 로그에
+  `LANE_HEALTH_LOST`를 남긴다(`classify_failure`가 `server`로 본다). 그 태스크는 다른 레인으로 이동한다.
+- **레인 워크트리:** 실행 중 각 레인이 `<repo>/.worktrees/fbl-<A>-<lane>`에서 돌고, `run`이 끝나면 지워진다.
+  남은 게 있으면 `git worktree remove --force <path>`로 정리한다.
+- **이동(`MOVED=`)과 재시도는 다르다.** 서버 문제 이동은 재시도 예산(태스크당 1회)을 쓰지 않고 이동도
+  태스크당 1회다. 재시도는 메인 워크트리 재동기화 + 마지막 시도의 소유 파일 오버레이에서 시작한다.
 
 ## 근거 실측
 

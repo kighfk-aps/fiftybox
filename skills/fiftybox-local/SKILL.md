@@ -1,24 +1,24 @@
 ---
 name: fiftybox-local
-description: Use when implementation should run on the fixed local executor — Mac Studio Qwen3.8-Flash-Next oQ4e-mtp (oMLX over Tailscale, co-resident lanes: Qwen3.8-27B 8-bit, Gemma4-26B-A4B) via Pi CLI — sequential TDD with no discovery and no model switching. Also when the user invokes /fiftybox-local or $fiftybox-local.
+description: Use when implementation should run on the local lane pool — Mac Studio Qwen3.8-Flash-Next oQ4e-mtp and ioh PC qwen3.8-flash-next-iq3_s, both via Pi CLI — independent tasks dispatch in parallel across live lanes, sequential when one lane is up, no discovery and no model outside the lane table. Also when the user invokes /fiftybox-local or $fiftybox-local.
 ---
 
 # Fiftybox Local
 
-구현 페이즈를 맥스튜디오(M4 Max 128GB) oMLX 서버(8000번)의 Qwen3.8-Flash-Next(oQ4e-mtp)로만
-돌린다. **executor는 고정이다** — 후보 탐색, 폴백 순서, 모델 교체가 없다.
+구현 페이즈를 로컬 레인 풀로 돌린다 — 맥스튜디오(M4 Max 128GB) Flash-Next(oQ4e-mtp)와 ioh PC `iq3s`.
+**레인 표(`LANE_POOL`)에 있는 것만 쓴다** — 후보 탐색, 폴백 순서, 표 밖 모델 교체가 없다.
 
 **핵심 루프:** 오케스트레이터(Claude/Codex)가 실패하는 테스트 작성(Red) → 로컬 모델이 통과시킴(Green)
-→ 오케스트레이터가 **묶음** 단위로 리뷰. **순차** 실행(모델이 하나뿐이라 병렬 디스패치가 없다).
+→ 오케스트레이터가 **묶음** 단위로 리뷰. 독립 태스크는 살아 있는 레인에 동시 배분, 레인 하나면 **순차**.
 
 ## Claude 사용량 계약
 
-Claude 비용은 `모델 호출 횟수 × 그때의 대화 크기`다. 로컬 모델이 공짜여도 오케스트레이터 턴이
+Claude 비용은 `모델 호출 횟수 × 그 때의 대화 크기`다. 로컬 모델이 공짜여도 오케스트레이터 턴이
 많으면 Sonnet 직접 구현보다 비싸다(실측: 7태스크에 Opus 60회, 호출당 평균 17만 토큰 → 약 $3.6 vs
 Sonnet $0.4~0.5). 그래서:
 
 1. 기계적 일은 `fbl_task.py` 한 번에 맡긴다 — 헬스체크·dry-run·길이 게이트·디스패치·테스트·
-   변조/범위/skip/외국문자 검사·메트릭 기록.
+   변조/범위/skip/외국문자 검사·메트릭 기록·레인 분배.
 2. **폴링 금지.** 폴링 한 번 = 대화 전체 재읽기. 배경 실행 후 알림을 기다린다.
 3. 리뷰는 **묶음당 1회**(최대 5태스크): `VERDICT` 줄 → 주석 뺀 `diff` 1회.
 4. **세션 위생을 지킨다**([Step 0](#step-0-세션-위생)). 스크립트가 이미 출력한 값을 다시 확인하지 않는다.
@@ -35,30 +35,26 @@ orchestrate.py가 실패하면 사용자에게 보고한다. 대신 구현하지
 /fiftybox-local "<작업 설명>"        /fiftybox-local --resume <artifactDir>        $fiftybox-local "<작업 설명>"
 ```
 
-provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않는다(예외 레인은 [reference.md](reference.md)).
+provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않는다. 한 레인만 쓰려면
+`run --lanes flash-next`로 제한한다(상세는 [reference.md](reference.md)).
 
-## Executor (고정)
+## 레인 풀 (LANE_POOL)
 
-| 항목 | 값 |
-|---|---|
-| `IMPL_AGENT` | `pi` |
-| `IMPL_PROVIDER` | `macstudio-qwen-flash-next` |
-| `IMPL_MODEL` | `Jundot--Qwen3.8-Flash-Next-oQ4e-mtp` |
-| `IMPL_TIMEOUT` | `1800` |
+| 레인 | provider / model | 엔드포인트·인증 | 컨텍스트 |
+|---|---|---|---|
+| Studio | `macstudio-qwen-flash-next` / `Jundot--Qwen3.8-Flash-Next-oQ4e-mtp` | `http://100.115.199.115:8000` (Bearer 키 `~/.config/opencode/macstudio-omlx.key`) | 262,144 |
+| ioh | `ioh` / `qwen3.8-flash-next-iq3_s` | `http://100.126.254.22:8080` (키 없음) | 131,072 |
 
-`fbl_task.py`가 모든 디스패치에 이 네 값을 넘긴다. orchestrate.py를 직접 부를 때는 **전부** 명시한다
-(`--provider`를 빠뜨리면 기본값 `opencode-go`로 조용히 나간다).
+에이전트는 `pi`, `IMPL_TIMEOUT`은 `1800`로 공통이다. 살아 있는 레인만 풀에 들어가고 둘 다 한가하면
+스튜디오가 먼저 가져간다. orchestrate.py를 직접 부를 때는 provider·model을 **전부** 명시한다
+(`--provider`를 빠뜨리면 기본값 `opencode-go`로 조용히 나간다). **ioh 서버를 올리거나 내리지 않는다.
+gemma4 12b는 레인이 아니다**(watchdog·worktree 상세: [reference.md](reference.md)).
 
-**백엔드:** Pi `~/.pi/agent/models.json`의 `macstudio-qwen-flash-next` → `http://100.115.199.115:8000/v1`
-(oMLX, brew 서비스). **Bearer 인증 필수** — 키는 `~/.config/opencode/macstudio-omlx.key`. 컨텍스트 262,144,
-max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로세스이고, Flash-Next는 상주
-약 75GB라 동시 구동하면 메모리를 경합한다 — oMLX memory guard는 `aggressive` tier(다른 레인 메모리
-절반을 압축기로 동원, `~/.omlx/settings.json`)라 Gemma4가 idle로 떠 있어도 램 여유가 있으면 작업이
-시작된다. tier를 임의로 되돌리지 않는다. 어떤 포트도 임의로 끄지 않는다. 서버 절차는 [reference.md](reference.md).
-
-**ioh 대체 레인:** 스튜디오 8000번이 장기 불가일 때만 `--executor iq3s`로 같은 계열 모델
-(ioh PC `qwen3.8-flash-next-iq3_s`, 키 없음, 컨텍스트 131,072, Pi provider명 `ioh`)을 쓴다.
-실사용은 사용자 지시가 있을 때만이다([reference.md](reference.md)).
+**스튜디오 백엔드:** Pi `~/.pi/agent/models.json`의 `macstudio-qwen-flash-next` → `http://100.115.199.115:8000/v1`
+(oMLX, brew 서비스). max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로세스이고,
+Flash-Next는 상주 약 75GB라 동시 구동하면 메모리를 경합한다 — oMLX memory guard는 `aggressive` tier(다른
+레인 메모리 절반을 압축기로 동원, `~/.omlx/settings.json`)라 Gemma4가 idle로 떠 있어도 램 여유가 있으면
+작업이 시작된다. tier를 임의로 되돌리지 않는다. 어떤 포트도 임의로 끄지 않는다. 서버 절차는 [reference.md](reference.md).
 
 ### 실행 예산
 
@@ -113,21 +109,25 @@ python3 ~/.claude/skills/fiftybox-orchestration/scripts/orchestrate.py --phase s
 python3 $FBL preflight --artifact-dir A
 ```
 
-JSON에서 `artifactDir`·`worktree`를 챙긴다. `PREFLIGHT=ok`면 계속한다. `down`/`auth`면
-[reference.md](reference.md)대로 처리하고, 8분 안에 못 살리면 `server`로 보고한다(모델 교체 제안 금지).
+JSON에서 `artifactDir`·`worktree`를 챙긴다. `preflight`는 레인마다 `LANE=… HEALTH=…` 줄을 찍고,
+`LANES_UP=`에 하나라도 살아 있으면 `PREFLIGHT=ok`다 — ioh만 살아 있으면 ioh로 진행한다(스튜디오 기동
+절차는 [reference.md](reference.md)). 전부 죽었으면 reference.md대로 처리하고 8분 안에 못 살리면 `server`로 보고한다.
 
-### Step 3: 태스크 분해 (순차)
+### Step 3: 태스크 분해 (독립 선언)
 
 설계를 원자적 단위로 쪼개 `A/tasks/task-N.md`로 쓴다:
 
 ```markdown
 <한 줄 제목>
 Modify ONLY: src/probe.py, tests/test_probe.py
+Depends: none
 - <행동 정의>
 ```
 
-- 명세 `TASK_SPEC_MAX_LINES(15)`줄 이하, 소유 파일 `TASK_MAX_FILES(2)`개 이하. **`Modify ONLY:` 줄 필수**
-  (범위 검사가 이 줄을 쓴다). "A하고 B하고 C"식 복합 태스크는 행동 경계에서 쪼갠다.
+- 명세 `TASK_SPEC_MAX_LINES(15)`줄 이하(**`Depends:` 줄 포함**), 소유 파일 `TASK_MAX_FILES(2)`개 이하.
+  **`Modify ONLY:` 줄 필수**(범위 검사가 이 줄을 쓴다). "A하고 B하고 C"식 복합 태스크는 행동 경계에서 쪼갠다.
+- **`Depends:`로 독립을 선언한다**(`none` 또는 선행 태스크 번호). 줄이 없으면 순차, `Modify ONLY:` 파일이나
+  Red 테스트 파일이 겹치는 태스크는 동시에 돌지 않는다. 독립임이 확실할 때만 `Depends: none`을 쓴다.
 - **너무 잘게 쪼개지도 않는다.** 호출 수가 곧 비용이다. 행동 경계가 다르지 않은 인접 조각은 상한까지 합친다.
   명세 9줄 미만 태스크가 줄줄이 이어지면 합칠 곳을 먼저 찾는다.
 - `A/task-batches.md`에 ```json 태스크 블록을 넣지 않는다(다중 모드로 바뀐다).
@@ -151,16 +151,17 @@ python3 $FBL run --artifact-dir A --tasks 1-3 --test-command "<명령>"
 환경(Codex 등)은 `--detach`로 띄우고 `python3 $FBL wait --artifact-dir A`(최대 9분 블로킹)를 반복한다. `wait`는 Bash `timeout`을 `600000`으로 지정한다(기본 2분이면 중간에 끊겨 턴이 늘어난다).
 
 태스크마다 스크립트가 한다: 헬스체크 → Red 복사·확인 → 예산 검사 → dry-run 길이 게이트(`PROMPT_MAX_LINES`) →
-실디스패치(`A/implement-task-N.out`, 마지막 줄 `EXIT_CODE=`) → 검사 → `A/executor-metrics.md` 행 추가.
+실디스패치(`A/lanes/<lane>/implement-task-N.out`, 마지막 줄 `EXIT_CODE=`) → 검사 → `A/executor-metrics.md` 행 추가.
 출력은 태스크당 한 줄이다:
 
 ```
-TASK=2 VERDICT=CLEAN EXIT=0 CLASS=- SECONDS=143 PROMPT=81 TESTS=pass TAMPER=none SCOPE=none SKIPS=none SCRIPT=none DIFF=+34/-2 COMMENTS=18%
+TASK=2 VERDICT=CLEAN EXIT=0 CLASS=- SECONDS=143 PROMPT=81 TESTS=pass TAMPER=none SCOPE=none SKIPS=none SCRIPT=none DIFF=+34/-2 COMMENTS=18% LANE=iq3s MOVED=flash-next->iq3s
 ```
 
-`CLEAN`이면 다음 태스크로 가고, `FLAG`(검사 걸림)·`FAIL`(테스트/디스패치 실패)·`STOP`(디스패치 전 중단)이면
-거기서 멈춘다. `STOP` 사유: `PREFLIGHT` `BUDGET` `GATE` `RED_ALREADY_PASSES` `NO_RED_TESTS` `SPEC_MISSING`
-`RETRY_BUDGET` `NO_TEST_COMMAND`.
+`CLEAN`이면 계속한다. `FLAG`·`FAIL`·`STOP`이면 새 배분을 멈춘다(진행 중 태스크는 끝까지 돌고 보고된다).
+레인 서버가 죽으면 스크립트가 그 태스크를 다른 레인으로 옮긴다(`MOVED=`) — **이동은 재시도 예산(태스크당
+1회)을 쓰지 않는다.** `STOP` 사유: `PREFLIGHT` `BUDGET` `GATE` `RED_ALREADY_PASSES` `NO_RED_TESTS`
+`SPEC_MISSING` `RETRY_BUDGET` `NO_TEST_COMMAND` `DEPENDS` `MOVE_BUDGET` `ALL_LANES_DOWN`.
 
 ### Step 6: 묶음 리뷰 (묶음당 1회)
 
@@ -184,31 +185,30 @@ python3 $FBL preflight --artifact-dir A                    # deploy 직전
 python3 $O --phase deploy $C --implement-agent pi --provider macstudio-qwen-flash-next \
   --model Jundot--Qwen3.8-Flash-Next-oQ4e-mtp --implementation-timeout 1800
 python3 $O --phase cleanup $C
-python3 $FBL calibrate --repo "$(pwd)"                     # 한 줄을 최종 보고에 붙인다
+python3 $FBL calibrate --repo "$(pwd)"                     # 레인별 한 줄씩 최종 보고에 붙인다
 ```
 
-`ADVICE`가 `KEEP`이 아니면 누적 행을 사용자에게 보여주고 **승인 후에만** 상수를 바꾼다.
-`summary.json`의 최종 상태를 보고한다.
+`ADVICE`는 레인별로 나온다(`LANE=` 줄). `KEEP`이 아닌 레인이 있으면 누적 행을 사용자에게 보여주고
+**승인 후에만** 상수를 바꾼다. `summary.json`의 최종 상태를 보고한다.
 
 ---
 
 ## 실패 처리
 
 스크립트가 `.out` 로그와 `EXIT_CODE`로 `CLASS`를 이미 분류한다. 다시 분류하지 말고 대응만 따른다.
-**executor가 하나뿐이므로 모델·provider 교체는 어떤 분류에서도 선택지가 아니다.**
+**레인 표 밖의 모델·provider로 바꾸는 것은 어떤 분류에서도 선택지가 아니다.**
 **유료 모델·원격 무료 모델로 전환하지 않는다.**
 
 | CLASS | 대응 |
 |---|---|
-| `server` | preflight부터 다시(기동 포함) 후 같은 설정으로 1회 재시도 |
+| `server` | 풀에서는 스크립트가 이미 다른 레인으로 옮겼다(`MOVED=`). `ALL_LANES_DOWN`이면 preflight부터 다시(기동 포함) 후 같은 설정으로 1회 재시도 |
 | `timeout` | timeout을 **올리지 않는다.** 행동 경계에서 하프 2개로 분할, 하프별 Red를 새로 쓰고 순차 재디스패치(재시도 1회 소비) |
 | `too_long` | 입력이 예산을 넘은 것. 넘친 항목만 줄인다(design 압축 / 명세 하프 분할) |
 | `no_changes` | 예산 초과 여부 먼저 점검 → 넘쳤으면 `too_long`처럼 쪼갠다. 아니면 1회 재시도, 반복되면 프롬프트 문제로 보고 |
 | `model`·`orchestrate`·`unknown` | 스킬/설정 버그. 멈추고 로그 원문과 함께 보고 |
 
-어떤 실패에서도 오케스트레이터가 대신 구현하지 않는다. 보고에는 레인
-(`pi/macstudio-qwen-flash-next/Jundot--Qwen3.8-Flash-Next-oQ4e-mtp`), 분류, `.out` 인용 + `EXIT_CODE`,
-예산 점검(spec/files/design/prompt 줄수), 추천 행동 2~4개를 담는다.
+어떤 실패에서도 오케스트레이터가 대신 구현하지 않는다. 보고에는 레인(`LANE=`의 provider/model), 분류,
+`.out` 인용 + `EXIT_CODE`, 예산 점검(spec/files/design/prompt 줄수), 추천 행동 2~4개를 담는다.
 
 ## 안전 계약
 
@@ -218,11 +218,11 @@ force push·force merge·reset hard·`-D` 브랜치 삭제 금지 / Phase 7 이�
 
 이 스킬 고유:
 
-- executor는 `pi`/`macstudio-qwen-flash-next`/`Jundot--Qwen3.8-Flash-Next-oQ4e-mtp`로 고정이다. 어떤
-  실패·속도 문제도 모델이나 provider를 바꾸지 않는다.
+- 레인 표(`LANE_POOL`) 밖의 모델·provider로 바꾸지 않는다. 어떤 실패·속도 문제도 예외가 아니다.
+  ioh 서버를 기동·종료하지 않는다(스튜디오 기동 절차는 [reference.md](reference.md) 그대로다).
 - provider는 테스트 파일을 수정하지 않는다(`TAMPER` 검사). 수정했으면 되돌리고 재실행한다.
 - `--dangerously-skip-permissions`는 orchestrate가 만든 격리된 워크트리 안에서만 유효하다.
-- 디스패치 앞에는 항상 Bearer 헬스체크를 한다(`fbl_task.py run`이 매 태스크 앞에서 한다). 8000번 oMLX와
+- 디스패치 앞에는 항상 헬스체크를 한다(`fbl_task.py run`이 매 태스크 앞에서 한다). 8000번 oMLX와
   11234/11235번 레인을 이 스킬이 임의로 끄거나 재시작하지 않는다.
 - `--phase implement`를 foreground로 직접 돌리지 않는다(10분 한도에 죽는다). 항상 `fbl_task.py`를 통한다.
 - 길이 게이트(`PROMPT_MAX_LINES`)를 통과하지 않은 태스크는 실디스패치하지 않는다.

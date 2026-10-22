@@ -25,7 +25,6 @@ has "$SKILL" "262,144" "SKILL.md documents the 262144 context window"
 # sequential execution — the executor is a single model
 has "$SKILL" "순차" "SKILL.md requires sequential dispatch"
 lacks "$SKILL" "동적 병렬" "SKILL.md drops the dynamic-parallel batch design"
-
 # Claude-usage contract: one script call per batch, no polling turns
 has "$SKILL" "fbl_task.py" "SKILL.md drives the loop through fbl_task.py"
 has "$SKILL" "run_in_background" "SKILL.md runs the batch as a background task"
@@ -56,10 +55,17 @@ has "$SKILL" "임의로 끄지 않는다" "SKILL.md never shuts down the residen
 # gemma4 is a benchmark-only lane and must not leak into the skill contract
 lacks "$SKILL" "macstudio-gemma4" "SKILL.md does not advertise the benchmark-only gemma4 lane"
 
-# the ioh lane is documented as an exception lane, not the default
-has "$SKILL" "iq3s" "SKILL.md names the ioh iq3s exception lane"
-has "$SKILL" "장기 불가" "SKILL.md gates the ioh lane on the studio lane being down"
-has "$REF" "예외 레인: ioh" "reference.md documents the ioh exception lane"
+# the ioh lane is a pool lane beside the studio lane
+has "$SKILL" "iq3s" "SKILL.md names the ioh iq3s pool lane"
+has "$SKILL" "131,072" "SKILL.md documents the ioh lane context window"
+lacks "$SKILL" "사용자 지시가 있을 때만" "SKILL.md drops the user-directed-only ioh gate"
+has "$REF" "레인 풀: ioh" "reference.md documents the ioh pool lane"
+
+# lane-pool contract: dependency declaration, per-lane output, moves
+has "$SKILL" "Depends:" "SKILL.md documents the Depends: declaration"
+has "$SKILL" "LANE=" "SKILL.md shows the LANE= output field"
+has "$SKILL" "MOVED=" "SKILL.md shows the MOVED= output field"
+has "$SKILL" "ALL_LANES_DOWN" "SKILL.md documents the ALL_LANES_DOWN stop"
 
 # size guard: the skill is re-read on every orchestrator turn
 LINES=$(wc -l < "$SKILL" | tr -d ' ')
