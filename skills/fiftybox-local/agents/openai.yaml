@@ -1,4 +1,4 @@
 name: fiftybox-local
 display_name: Fiftybox Local
-description: Run the Fiftybox TDD pipeline on the fixed local executor — Mac Studio Qwen3.8-Flash-Next via oMLX, driven by one batch script to keep orchestrator token use low.
-default_prompt: '$fiftybox-local "implement the requested design on the Mac Studio local executor"'
+description: Run the Fiftybox TDD pipeline on the local lane pool — whichever candidate model the Mac Studio (Qwen3.8-Flash-Next via oMLX and others) and the ioh PC (R9700) are serving right now, driven by one batch script to keep orchestrator token use low.
+default_prompt: '$fiftybox-local "implement the requested design on the local models the Mac Studio and ioh PC are serving"'

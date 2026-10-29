@@ -52,14 +52,25 @@ has "$SKILL" "EXIT_CODE=" "SKILL.md keeps the exit-code sentinel"
 has "$SKILL" "태스크당 1회" "SKILL.md caps automatic retries at one per task"
 has "$SKILL" "임의로 끄지 않는다" "SKILL.md never shuts down the resident lanes"
 
-# gemma4 is a benchmark-only lane and must not leak into the skill contract
-lacks "$SKILL" "macstudio-gemma4" "SKILL.md does not advertise the benchmark-only gemma4 lane"
-
 # the ioh lane is a pool lane beside the studio lane
 has "$SKILL" "iq3s" "SKILL.md names the ioh iq3s pool lane"
-has "$SKILL" "| ioh | \`ioh\` / \`qwen3.8-flash-next-iq3_s\` | \`http://100.76.6.16:8080\` (키 없음) | 262,144 |" "SKILL.md documents the ioh lane context window"
 lacks "$SKILL" "사용자 지시가 있을 때만" "SKILL.md drops the user-directed-only ioh gate"
 has "$REF" "레인 풀: ioh" "reference.md documents the ioh pool lane"
+
+# served-model lanes: the full candidate table lives in reference.md, SKILL.md stays compact
+has "$REF" "macstudio-gemma4" "reference.md lists gemma4 as an ordinary Studio candidate"
+has "$REF" "ioh-gemma31b" "reference.md lists the ioh Gemma-31B candidate"
+has "$REF" "ioh-qwen27b" "reference.md lists the ioh Qwen3.8-27B candidate"
+has "$REF" "RTX 5060 Ti" "reference.md says the 5060 Ti (8081) is not a lane"
+has "$REF" "SKIP=" "reference.md documents the preflight SKIP= line"
+has "$SKILL" "R9700" "SKILL.md limits ioh to the R9700"
+has "$SKILL" "PICK=" "SKILL.md shows the preflight PICK= line"
+has "$SKILL" "NO_CANDIDATES" "SKILL.md documents the NO_CANDIDATES stop"
+has "$SKILL" "후보 표" "SKILL.md names the candidate table"
+lacks "$SKILL" "benchmark-only" "SKILL.md has no benchmark-only lane"
+lacks "$REF" "benchmark-only" "reference.md has no benchmark-only lane"
+lacks "$SKILL" "LANE_POOL" "SKILL.md no longer mentions the fixed pool constant"
+lacks "$REF" "LANE_POOL" "reference.md no longer mentions the fixed pool constant"
 
 # lane-pool contract: dependency declaration, per-lane output, moves
 has "$SKILL" "Depends:" "SKILL.md documents the Depends: declaration"
@@ -74,7 +85,6 @@ if [[ "$LINES" -le 230 ]]; then pass "SKILL.md is $LINES lines (<= 230)"; else f
 # reference.md carries what only matters on failure
 has "$REF" "omlx start" "reference.md documents the server start procedure"
 has "$REF" "lsof" "reference.md documents the lane check"
-has "$REF" "benchmark-only" "reference.md marks the gemma4 lane as benchmark-only"
 has "$REF" "Calibration" "reference.md keeps the calibration rule"
 
 # deleted lanes must stay deleted

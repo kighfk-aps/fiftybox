@@ -75,24 +75,56 @@ prefill이 400으로 거부됐다(10/15 로그). aggressive는 다른 프로세�
 
 이력: 60/120은 Gemma4 실측에서 온 값이었다. 2026-10-08 trendwatch 실험에서 Flash-Next가 40태스크를
 모두 첫 시도에 통과해(`docs/reviews/2026-10-08-fiftybox-local-vs-sonnet-trendwatch.md`) 위 규칙대로
-70/140으로 올렸다. Gemma4 레인은 원래 값(60/120)을 유지한다.
+70/140으로 올렸다. Flash-Next 계열이 아닌 후보는 원래 값(60/120)으로 시작한다.
 
-## benchmark-only: gemma4 레인
+## 후보 표
 
-`fbl_task.py --executor gemma4`는 `macstudio-gemma4`(11235번, 키 없음)로 같은 루프를 돌린다. 스킬의
-executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=`가 뜬다). Flash-Next가
-꺼져 있어도 11235번이 떠 있으면 토큰 절감 효과를 재 볼 수 있어서 둔 옵션이다. 실사용 작업에 쓰지 않는다.
-측정 도구는 `tests/bench/token_bench.py`.
+후보는 `fbl_task.py`의 `EXECUTORS`에 있는 아홉 개뿐이다(표 순서가 `params_b` 동점 규칙). 세 조건을 모두 만족해야
+후보다: 표에 있고, Pi `~/.pi/agent/models.json`에 provider·model이 등록돼 있고, `~/.claude/fiftybox-config.json`에서
+꺼져 있지 않다(항목이 없으면 켜짐). 같은 PC의 후보끼리는 한 번에 하나만 레인이 된다.
 
-## 레인 풀: ioh iq3_s
+| 이름 | PC | provider / model | 포트 | 키 | 예산 | params_b |
+|---|---|---|---|---|---|---|
+| `flash-next` | Studio | `macstudio-qwen-flash-next` / `Jundot--Qwen3.8-Flash-Next-oQ4e-mtp` | 8000 | 필요 | 70/140 | 125 |
+| `qwen27b-mlx4` | Studio | `macstudio-qwen-flash-next` / `lmstudio-community--Qwen3.8-27B-MLX-4bit` | 8000 | 필요 | 60/120 | 27 |
+| `qwen27b-8bit` | Studio | `macstudio-qwen38-27b` / `qwen38-27b-8bit` | 11234 | 없음 | 60/120 | 27 |
+| `gemma4` | Studio | `macstudio-gemma4` / `mlx-community--gemma-4-26B-A4B-it-qat-4bit` | 11235 | 없음 | 60/120 | 26 |
+| `gpt-oss-20b` | Studio | `macstudio-darkbloom` / `gpt-oss-20b` | 8001 | 없음 | 60/120 | 20 |
+| `qwen35b-a3b` | Studio | `macstudio-darkbloom` / `qwen3.5-35b-a3b` | 8001 | 없음 | 60/120 | 35 |
+| `iq3s` | ioh (R9700) | `ioh` / `qwen3.8-flash-next-iq3_s` | 8080 | 없음 | 70/140 | 125 |
+| `gemma31b` | ioh (R9700) | `ioh-gemma31b` / `gemma-4-31b-it` | 8083 | 없음 | 60/120 | 31 |
+| `qwen27b` | ioh (R9700) | `ioh-qwen27b` / `qwen3.8-27b` | 8084 | 없음 | 60/120 | 27 |
 
-`fbl_task.py`의 레인 풀(`LANE_POOL`)은 맥스튜디오 Flash-Next와 ioh PC(Tailscale `100.76.6.16:8080`,
-llama.cpp Strata, 키 없음)의 `qwen3.8-flash-next-iq3_s` 두 레인이다. Pi provider명은 `ioh`다. Flash-Next와
-같은 모델 계열이라 예산(70/140)을 공유한다. 컨텍스트는 스튜디오와 같은 262,144다. 살아 있는 레인이 둘 이상이면 독립 태스크가 동시에 분배되고, 한쪽만 살아 있으면
-그 레인으로 순차 실행이다. 한 저장소만 쓰려면 `run --lanes flash-next`로 제한한다.
+- **선택 규칙:** 맥스튜디오는 `GET /v1/models`가 200이고 `data[].id`에 후보의 model ID가 있어야 «서빙 중»이다(8000번 한
+  포트에서 모델이 바뀐다). ioh는 HTTP 200만 본다(포트 하나에 모델 하나). 한 PC에서 둘 이상이 서빙 중이면 `params_b`가
+  큰 쪽, 같으면 표 순서다. `flash-next`는 모델 카드 기준 125B(활성 6B)다. 11234·8001번은 키 없음으로 두었다 — 서버가
+  떠 있을 때 401이면 `needs_key`를 True로 바꾼다.
+- **ioh는 R9700 포트만 후보다.** 8080번(Strata 중계)·8083·8084번이 R9700에서 돈다. 8081번(RTX 5060 Ti)은 RAG용
+  Gemma-4-12b라 표에도 Pi에도 없고 레인이 될 수 없다.
+- **Pi에 등록되지 않은 모델은 서빙 중이어도 후보가 아니다.** 예: 스튜디오 디스크의
+  `umixer--Qwen3.8-Flash-Next-oQ4e-mix6-mtp`(117GB). 쓰려면 Pi `models.json`에 한 줄, `EXECUTORS`에 한 줄을 더한다.
+- **프리플라이트 출력:** `SKIP=<이름> REASON=not-in-pi|off-in-config`(후보에서 빠진 이유),
+  `LANE=<이름> HEALTH=<코드> SERVED=yes|no`(`no`는 서버는 떴지만 후보 모델 ID가 목록에 없음),
+  `PICK=studio:<이름>,ioh:<이름>`, `WARN=pi registry unreadable ...`(등록 확인을 건너뜀). 후보가 0개면
+  `PREFLIGHT=none`이고 `run`은 `STOP=NO_CANDIDATES`다.
+- **실행 중에 모델이 바뀌면** 그 레인은 죽은 것으로 본다. `Unknown model`로 거부됐고 헬스가 더는 200이 아니면
+  `server`로 다시 분류해(모델 실패가 아님) 태스크를 한 번 다른 레인으로 옮긴다(`MOVED=`).
+- **스튜디오 백엔드:** Pi `models.json`의 `macstudio-qwen-flash-next` → `http://100.115.199.115:8000/v1`
+  (oMLX, brew 서비스). max tokens 16,384. 11234번(Qwen3.8-27B 8bit)·11235번(Gemma4)은 별도 프로세스이고,
+  Flash-Next는 상주 약 75GB라 동시 구동하면 메모리를 경합한다 — oMLX memory guard는 `aggressive` tier(다른
+  레인 메모리 절반을 압축기로 동원, `~/.omlx/settings.json`)라 Gemma4가 idle로 떠 있어도 램 여유가 있으면
+  작업이 시작된다. tier를 임의로 되돌리지 않는다. 어떤 포트도 임의로 끄지 않는다.
+- 토큰 절감 측정 도구는 `tests/bench/token_bench.py`(`--executor gemma4|flash-next`로 한 후보만 지정해 돌린다).
 
-- **생존 판정은 HTTP 응답뿐이다.** 모델 이름 확인을 하지 않는다. ioh가 RAG 때문에 q3s를 내리고 gemma4
-  12b를 올리면 Tailscale이 응답하지 않게 돼 있으므로 그 레인은 조용히 풀에서 빠진다.
+## 레인 풀: ioh (R9700)
+
+ioh PC(Tailscale `100.76.6.16`, llama.cpp, 키 없음)에서 R9700이 서빙하는 모델이 ioh 레인이다: `iq3s`(8080번 Strata
+중계, Flash-Next 계열이라 예산 70/140, 컨텍스트 262,144), `gemma31b`(8083번), `qwen27b`(8084번). R9700은 VRAM 32GB라
+한 번에 모델 하나가 올라간다. 살아 있는 레인이 둘(PC 둘)이면 독립 태스크가 동시에 분배되고, 한쪽만 살아 있으면
+그 레인으로 순차 실행이다. 한 후보만 쓰려면 `run --lanes flash-next`처럼 후보 이름으로 제한한다.
+
+- **생존 판정은 HTTP 응답뿐이다(ioh).** 모델 ID는 보지 않는다. ioh가 RAG 때문에 R9700의 모델을 바꾸면 내려간
+  포트는 응답하지 않아 조용히 풀에서 빠지고, 새로 올라온 모델의 포트가 응답하면 그쪽이 레인이 된다.
 - **이 스킬은 ioh 서버를 기동·종료하지 않는다.** RAG가 쓰는 중이라 방해하지 않는다. 스튜디오 기동 절차만
   아래(«서버 점검·기동») 그대로 유지된다. 스튜디오가 죽어 있고 ioh만 살아 있으면 ioh로 진행한다.
 - **와치독:** 디스패치 중 60초 간격 헬스체크로 3회 연속 실패하면 프로세스 그룹을 죽이고 로그에
