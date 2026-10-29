@@ -334,6 +334,52 @@ class PreflightServedTest(unittest.TestCase):
         self.assertEqual(rc, 2)
         self.assertIn("STOP=NO_CANDIDATES", out)
 
+    def test_explicit_executor_never_warms_up_a_model_the_server_does_not_list(self):
+        fbl.executor_health = lambda ex: 200
+        fbl.executor_models = lambda ex: []
+        fbl.warm_up = lambda ex: self.fail("must not send a request for an unserved model")
+        rc, out, _ = self.run_main("preflight", "--executor", "flash-next")
+        self.assertEqual(rc, 1)
+        self.assertIn("EXECUTOR=flash-next HEALTH=200 SERVED=no", out)
+        self.assertIn("PREFLIGHT=down", out)
+
+    def test_registry_with_the_wrong_shape_warns_instead_of_crashing(self):
+        (Path(self.td.name) / "pi.json").write_text(json.dumps({"providers": []}), encoding="utf-8")
+        fbl.executor_health = health_for({"flash-next": 200})
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 0)
+        self.assertIn("WARN=pi registry unreadable", out)
+
+    def test_a_401_on_a_keyless_port_points_at_needs_key_not_the_key_file(self):
+        fbl.executor_health = health_for({"gemma31b": 401})
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 1)
+        self.assertIn("PREFLIGHT=auth", out)
+        self.assertIn("gemma31b", out)
+        self.assertIn("needs_key", out)
+        self.assertNotIn("do not reissue", out)
+        self.assertNotIn("start procedure", out)
+        fbl.executor_health = lambda ex: 401
+        rc, out, _ = self.run_main("preflight", "--executor", "gemma31b")
+        self.assertIn("needs_key", out)
+
+
+class OddJsonShapesTest(unittest.TestCase):
+    BAD_REGISTRIES = [{"providers": {"ioh": "x"}}, {"providers": {"ioh": {"models": "x"}}},
+                      {"providers": {"ioh": {"models": [1, None]}}}]
+    BAD_CONFIGS = [{"providers": []}, {"providers": {"pi": True}}, {"providers": {"pi": {"backends": []}}},
+                   {"providers": {"pi": {"backends": {"ioh": [1]}}}},
+                   {"providers": {"pi": {"backends": {"ioh": {"models": []}}}}}]
+
+    def test_odd_registry_shapes_never_raise(self):
+        for reg in self.BAD_REGISTRIES:
+            names, skipped = fbl.eligible_candidates(reg, None)
+            self.assertEqual(sorted(names + list(skipped)), sorted(fbl.EXECUTORS), reg)
+
+    def test_odd_config_shapes_count_as_no_information_so_everything_stays_on(self):
+        for cfg in self.BAD_CONFIGS:
+            self.assertEqual(fbl.eligible_candidates(None, cfg), (list(fbl.EXECUTORS), {}), cfg)
+
 
 class ProbeLanesTest(unittest.TestCase):
     def test_lsof_checks_the_darkbloom_port_too(self):

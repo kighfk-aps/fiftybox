@@ -123,23 +123,29 @@ def load_json(path: Path) -> dict | None:
     return data if isinstance(data, dict) else None
 
 
+def _as_dict(value) -> dict:
+    """Hand-edited JSON may have the wrong shape at any level: treat that as empty."""
+    return value if isinstance(value, dict) else {}
+
+
 def eligible_candidates(registry: dict | None, config: dict | None) -> tuple[list[str], dict[str, str]]:
     """Candidates registered in Pi and not switched off in fiftybox-config.
 
     Returns (names in table order, {skipped name: "not-in-pi" | "off-in-config"}).
     ``None`` for either source means unreadable: that check is skipped. A missing
     config entry counts as on; ``providers.pi.enabled == false`` turns all off."""
-    pi_cfg = ((config or {}).get("providers") or {}).get("pi") or {}
+    pi_cfg = _as_dict(_as_dict(_as_dict(config).get("providers")).get("pi"))
     names: list[str] = []
     skipped: dict[str, str] = {}
     for name, ex in EXECUTORS.items():
         if registry is not None:
-            models = ((registry.get("providers") or {}).get(ex.provider) or {}).get("models") or []
-            if ex.model not in {m.get("id") for m in models if isinstance(m, dict)}:
+            models = _as_dict(_as_dict(registry.get("providers")).get(ex.provider)).get("models")
+            ids = {m.get("id") for m in models if isinstance(m, dict)} if isinstance(models, list) else set()
+            if ex.model not in ids:
                 skipped[name] = "not-in-pi"
                 continue
-        backend = (pi_cfg.get("backends") or {}).get(ex.provider) or {}
-        if pi_cfg.get("enabled") is False or (backend.get("models") or {}).get(ex.model) is False:
+        backend = _as_dict(_as_dict(pi_cfg.get("backends")).get(ex.provider))
+        if pi_cfg.get("enabled") is False or _as_dict(backend.get("models")).get(ex.model) is False:
             skipped[name] = "off-in-config"
             continue
         names.append(name)
@@ -1253,6 +1259,8 @@ def current_candidates() -> tuple[list[str], dict[str, str], list[str]]:
     Reads the Pi registry and fiftybox-config at call time (the paths are module
     globals); an unreadable registry skips the registration check with a warning."""
     registry = load_json(PI_MODELS_PATH)
+    if registry is not None and not isinstance(registry.get("providers"), dict):
+        registry = None  # wrong shape counts as unreadable
     names, skipped = eligible_candidates(registry, load_json(CONFIG_PATH))
     warnings = [] if registry is not None else ["WARN=pi registry unreadable; registration check skipped"]
     return names, skipped, warnings
@@ -1286,11 +1294,21 @@ def select_mode(lanes_arg: str | None, executor_arg: str | None, health: Callabl
     return "single", live
 
 
+def _auth_hint(names: list[str]) -> str:
+    """PREFLIGHT=auth text: a key mismatch for keyed ports, a table fix for keyless ones."""
+    if any(EXECUTORS[n].needs_key for n in names):
+        return "PREFLIGHT=auth (key file and studio auth.api_key disagree; do not reissue the key)"
+    return (f"PREFLIGHT=auth ({', '.join(names)} answered 401 but is assumed keyless; "
+            f"set needs_key in EXECUTORS, see reference.md)")
+
+
 def _preflight_executor(args) -> int:
     ex = _executor(args.executor)
     code = executor_health(ex)
-    print(f"EXECUTOR={ex.name} HEALTH={code}")
-    if code == 200:
+    served = code == 200 and executor_serving(ex) == 200
+    suffix = f" SERVED={'yes' if served else 'no'}" if code == 200 else ""
+    print(f"EXECUTOR={ex.name} HEALTH={code}{suffix}")
+    if served:
         warmed = Path(args.artifact_dir, ".fbl", "warmed") if args.artifact_dir else None
         if warmed is None or not warmed.exists():
             wcode = warm_up(ex)
@@ -1303,10 +1321,13 @@ def _preflight_executor(args) -> int:
                 return 1
         print("PREFLIGHT=ok")
         return 0
+    if code == 200:  # never send a warm-up request for a model the server does not list
+        print("PREFLIGHT=down (the server is up but does not list this model; see reference.md)")
+        return 1
     lanes = probe_lanes()
     print(f"LANES={lanes}")
     if code == 401:
-        print("PREFLIGHT=auth (key file and studio auth.api_key disagree; do not reissue the key)")
+        print(_auth_hint([ex.name]))
     else:
         print("PREFLIGHT=down (start procedure: reference.md)")
     return 1
@@ -1351,8 +1372,9 @@ def _preflight_pool(args) -> int:
         print("PREFLIGHT=ok")
         return 0
     print(f"LANES={probe_lanes()}")
-    if any(codes[n] == 401 for n in names if EXECUTORS[n].host == "studio"):
-        print("PREFLIGHT=auth (key file and studio auth.api_key disagree; do not reissue the key)")
+    unauthorized = [n for n in names if codes[n] == 401]
+    if unauthorized:
+        print(_auth_hint(unauthorized))
     else:
         print("PREFLIGHT=down (start procedure: reference.md)")
     return 1
