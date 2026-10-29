@@ -95,10 +95,7 @@ EXECUTORS = {
         f"{IOH_URL}:8084", False, design_max=60, prompt_max=120, host="ioh", params_b=27.0),
 }
 DEFAULT_EXECUTOR = "flash-next"
-HOST_ORDER = ("studio", "ioh")
-# Local lane pool: the studio is preferred (higher quantization, bigger ctx);
-# gemma4 stays out (benchmark-only). Each lane keeps its own Executor budget.
-LANE_POOL = ("flash-next", "iq3s")
+HOST_ORDER = ("studio", "ioh")  # the studio is preferred when both PCs are idle
 LANE_SYNC_DIRS = ("node_modules", ".venv", "venv")
 PI_MODELS_PATH = Path("~/.pi/agent/models.json").expanduser()
 CONFIG_PATH = Path("~/.claude/fiftybox-config.json").expanduser()
@@ -451,8 +448,39 @@ def check_health(base_url: str, key: str | None = None, timeout: float = 10) -> 
         return 0
 
 
+def fetch_models(base_url: str, key: str | None = None, timeout: float = 10) -> list[str]:
+    """Model ids a server lists at /v1/models; [] on any HTTP, network or JSON failure."""
+    req = urllib.request.Request(base_url.rstrip("/") + "/v1/models")
+    if key:
+        req.add_header("Authorization", f"Bearer {key}")
+    try:
+        with _NO_PROXY.open(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8")).get("data")
+    except urllib.error.HTTPError as exc:
+        exc.close()
+        return []
+    except (urllib.error.URLError, OSError, ValueError, AttributeError):
+        return []
+    return [m["id"] for m in data or [] if isinstance(m, dict) and isinstance(m.get("id"), str)]
+
+
 def executor_health(ex: Executor) -> int:
     return check_health(ex.base_url, read_key(KEY_FILE) if ex.needs_key else None)
+
+
+def executor_models(ex: Executor) -> list[str]:
+    return fetch_models(ex.base_url, read_key(KEY_FILE) if ex.needs_key else None)
+
+
+def executor_serving(ex: Executor) -> int:
+    """executor_health, but a Studio candidate whose model id is not listed counts as down.
+
+    The Studio's oMLX swaps models on one port, so HTTP 200 alone proves nothing there.
+    An ioh port serves exactly one model, so 200 is enough."""
+    code = executor_health(ex)
+    if code == 200 and ex.host == "studio" and ex.model not in executor_models(ex):
+        return 0
+    return code
 
 
 def warm_up(ex: Executor) -> int:
@@ -547,12 +575,19 @@ def pick_task(queue_: list[int], deps: dict[int, set[int]], done: set[int], busy
 
 
 def live_lanes(names: list[str], health: Callable[[Executor], int]) -> list[str]:
-    """Names whose health check is 200, ordered by LANE_POOL preference."""
+    """One lane per PC: among the names whose health is 200, the bigger params_b wins.
+
+    Ties fall back to table order; the result lists the studio first (HOST_ORDER)."""
     unknown = [n for n in names if n not in EXECUTORS]
     if unknown:
         raise ValueError(f"unknown lane: {unknown[0]}")
-    live = [n for n in names if health(EXECUTORS[n]) == 200]
-    return sorted(live, key=lambda n: LANE_POOL.index(n) if n in LANE_POOL else len(LANE_POOL))
+    best: dict[str, str] = {}
+    for n, ex in EXECUTORS.items():  # table order breaks params_b ties
+        if n in names and health(ex) == 200:
+            cur = best.get(ex.host)
+            if cur is None or ex.params_b > EXECUTORS[cur].params_b:
+                best[ex.host] = n
+    return sorted(best.values(), key=lambda n: HOST_ORDER.index(EXECUTORS[n].host))
 
 
 def create_lane_worktree(main_wt: Path, path: Path) -> Path:
@@ -1215,17 +1250,23 @@ def _executor(name: str | None) -> Executor:
 
 
 def select_mode(lanes_arg: str | None, executor_arg: str | None, health: Callable[[Executor], int],
-                state: dict, ids: list[int]) -> tuple[str, list[str]]:
+                state: dict, ids: list[int], *,
+                candidates: list[str] | None = None) -> tuple[str, list[str]]:
     """single | pool | down, plus the lanes to use.
 
-    An explicit --executor keeps the old single-lane path. Otherwise the
-    candidates are --lanes or LANE_POOL, filtered by health: two or more live
-    lanes dispatch in parallel, one live lane stays sequential unless this
-    batch already recorded a lane (a run in progress or moved)."""
+    An explicit --executor keeps the old single-lane path. Otherwise the names
+    are --lanes or every table entry, limited to ``candidates`` (None = all) and
+    filtered by health, one lane per PC: two live lanes dispatch in parallel, one
+    live lane stays sequential unless this batch already recorded a lane (a run
+    in progress or moved)."""
     if executor_arg:
         return "single", [executor_arg]
-    names = [s.strip() for s in lanes_arg.split(",") if s.strip()] if lanes_arg else list(LANE_POOL)
-    live = live_lanes(names, health)
+    names = [s.strip() for s in lanes_arg.split(",") if s.strip()] if lanes_arg else list(EXECUTORS)
+    unknown = [n for n in names if n not in EXECUTORS]
+    if unknown:
+        raise ValueError(f"unknown lane: {unknown[0]}")
+    allowed = list(EXECUTORS) if candidates is None else candidates
+    live = live_lanes([n for n in names if n in allowed], health)
     if not live:
         return "down", []
     if len(live) >= 2:
@@ -1263,15 +1304,15 @@ def _preflight_executor(args) -> int:
 
 
 def _preflight_pool(args) -> int:
-    """Pool preflight: every lane in LANE_POOL, ok if at least one is up.
+    """Pool preflight: every candidate in EXECUTORS, ok if at least one lane is up.
 
     The studio is never auto-started; when ioh alone answers, runs proceed on
     ioh (see reference.md for the studio start procedure)."""
     codes = {}
-    for lane in LANE_POOL:
+    for lane in EXECUTORS:
         codes[lane] = executor_health(EXECUTORS[lane])
         print(f"LANE={lane} HEALTH={codes[lane]}")
-    live = [lane for lane in LANE_POOL if codes[lane] == 200]
+    live = live_lanes(list(EXECUTORS), lambda ex: codes[ex.name])
     for lane in live:
         marker = "warmed" if lane == "flash-next" else f"warmed-{lane}"
         warmed = Path(args.artifact_dir, ".fbl", marker) if args.artifact_dir else None
@@ -1416,7 +1457,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("run")
     common(sp)
-    sp.add_argument("--lanes", help="comma-separated lane names from LANE_POOL (default: all)")
+    sp.add_argument("--lanes", help="comma-separated candidate names from EXECUTORS (default: all)")
     sp.add_argument("--artifact-dir", required=True)
     sp.add_argument("--tasks", required=True)
     sp.add_argument("--test-command")

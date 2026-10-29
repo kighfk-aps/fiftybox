@@ -11,7 +11,9 @@ import importlib.util
 import json
 import sys
 import tempfile
+import threading
 import unittest
+from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -116,6 +118,126 @@ class LoadJsonTest(unittest.TestCase):
             self.assertIsNone(fbl.load_json(t / "missing.json"))
             self.assertIsNone(fbl.load_json(t / "bad.json"))
             self.assertEqual(fbl.load_json(t / "ok.json"), {"a": 1})
+
+
+def health_for(codes):
+    return lambda ex: codes.get(ex.name, 0)
+
+
+ALL = list(fbl.EXECUTORS)
+
+
+class LiveLanesPerHostTest(unittest.TestCase):
+    def test_todays_state_pairs_flash_next_with_gemma31b(self):
+        up = health_for({"flash-next": 200, "gemma31b": 200})
+        self.assertEqual(fbl.live_lanes(ALL, up), ["flash-next", "gemma31b"])
+
+    def test_one_lane_per_pc_and_the_bigger_model_wins(self):
+        up = health_for({"flash-next": 200, "gemma4": 200, "iq3s": 200, "gemma31b": 200})
+        self.assertEqual(fbl.live_lanes(ALL, up), ["flash-next", "iq3s"])
+        up = health_for({"gemma4": 200, "qwen35b-a3b": 200, "qwen27b-8bit": 200})
+        self.assertEqual(fbl.live_lanes(ALL, up), ["qwen35b-a3b"])
+
+    def test_equal_params_fall_back_to_table_order(self):
+        up = health_for({"qwen27b-8bit": 200, "qwen27b-mlx4": 200})
+        self.assertEqual(fbl.live_lanes(ALL, up), ["qwen27b-mlx4"])
+
+    def test_a_new_r9700_model_becomes_the_ioh_lane_without_code_changes(self):
+        self.assertEqual(fbl.live_lanes(ALL, health_for({"qwen27b": 200})), ["qwen27b"])
+
+    def test_studio_comes_first_and_unknown_names_raise(self):
+        up = health_for({"flash-next": 200, "iq3s": 200})
+        self.assertEqual(fbl.live_lanes(["iq3s", "flash-next"], up), ["flash-next", "iq3s"])
+        with self.assertRaises(ValueError):
+            fbl.live_lanes(["nope"], up)
+
+
+class ExecutorServingTest(unittest.TestCase):
+    def setUp(self):
+        self._h, self._m = fbl.executor_health, fbl.executor_models
+
+    def tearDown(self):
+        fbl.executor_health, fbl.executor_models = self._h, self._m
+
+    def test_studio_candidate_needs_its_model_id_listed(self):
+        fbl.executor_health = lambda ex: 200
+        fbl.executor_models = lambda ex: ["Jundot--Qwen3.8-Flash-Next-oQ4e-mtp"]
+        self.assertEqual(fbl.executor_serving(fbl.EXECUTORS["flash-next"]), 200)
+        self.assertEqual(fbl.executor_serving(fbl.EXECUTORS["qwen27b-mlx4"]), 0)
+
+    def test_ioh_candidate_only_needs_http_200(self):
+        fbl.executor_health = lambda ex: 200
+        fbl.executor_models = lambda ex: self.fail("ioh must not consult /v1/models ids")
+        self.assertEqual(fbl.executor_serving(fbl.EXECUTORS["gemma31b"]), 200)
+
+    def test_a_non_200_passes_through_without_listing_models(self):
+        fbl.executor_health = lambda ex: 401
+        fbl.executor_models = lambda ex: self.fail("no id check when health is not 200")
+        self.assertEqual(fbl.executor_serving(fbl.EXECUTORS["flash-next"]), 401)
+
+
+class SelectModeCandidatesTest(unittest.TestCase):
+    def test_candidates_limit_the_pool(self):
+        self.assertEqual(fbl.select_mode(None, None, lambda ex: 200, {}, [1], candidates=["iq3s"]),
+                         ("single", ["iq3s"]))
+        self.assertEqual(fbl.select_mode(None, None, lambda ex: 200, {}, [1], candidates=[]),
+                         ("down", []))
+
+    def test_lanes_flag_is_intersected_with_candidates_and_still_validated(self):
+        self.assertEqual(fbl.select_mode("flash-next,iq3s", None, lambda ex: 200, {}, [1],
+                                         candidates=["iq3s"]), ("single", ["iq3s"]))
+        with self.assertRaises(ValueError):
+            fbl.select_mode("nope", None, lambda ex: 200, {}, [1], candidates=ALL)
+
+    def test_todays_state_runs_as_a_two_lane_pool(self):
+        up = health_for({"flash-next": 200, "gemma31b": 200})
+        self.assertEqual(fbl.select_mode(None, None, up, {}, [1, 2]),
+                         ("pool", ["flash-next", "gemma31b"]))
+
+
+class FetchModelsTest(unittest.TestCase):
+    """Fake server as in HealthTest (tests/test_fbl_task.py)."""
+
+    def setUp(self):
+        outer = self
+        outer.seen = []
+        outer.reply = (200, b'{"data":[{"id":"a"},{"id":"b"}]}')
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                outer.seen.append((self.path, self.headers.get("Authorization")))
+                status, body = outer.reply
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *a):
+                pass
+
+        self.server = HTTPServer(("127.0.0.1", 0), Handler)
+        self.base = f"http://127.0.0.1:{self.server.server_address[1]}"
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def tearDown(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+    def test_lists_ids(self):
+        self.assertEqual(fbl.fetch_models(self.base), ["a", "b"])
+        self.assertEqual(self.seen[0][0], "/v1/models")
+
+    def test_sends_bearer_key(self):
+        fbl.fetch_models(self.base, key="k")
+        self.assertEqual(self.seen[0][1], "Bearer k")
+
+    def test_errors_give_empty_list(self):
+        for reply in ((500, b"boom"), (200, b"not json"), (200, b'{"nodata":1}'),
+                      (200, b'{"data":[{"x":1}]}')):
+            self.reply = reply
+            self.assertEqual(fbl.fetch_models(self.base), [], reply)
+
+    def test_unreachable_gives_empty_list(self):
+        self.assertEqual(fbl.fetch_models("http://127.0.0.1:1", timeout=1), [])
 
 
 if __name__ == "__main__":

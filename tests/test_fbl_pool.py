@@ -118,11 +118,11 @@ class PickTaskTest(unittest.TestCase):
 # ---------- T4: lane table and live lanes ----------
 
 class LanePoolTableTest(unittest.TestCase):
-    def test_lane_pool_is_studio_first_then_ioh(self):
-        self.assertEqual(fbl.LANE_POOL, ("flash-next", "iq3s"))
+    def test_there_is_no_fixed_pool_constant(self):
+        self.assertFalse(hasattr(fbl, "LANE_POOL"))
 
-    def test_gemma4_is_not_a_lane(self):
-        self.assertNotIn("gemma4", fbl.LANE_POOL)
+    def test_gemma4_is_an_ordinary_studio_candidate(self):
+        self.assertEqual(fbl.live_lanes(["gemma4"], lambda ex: 200), ["gemma4"])
 
     def test_live_lanes_ordered_by_pool_preference(self):
         got = fbl.live_lanes(["iq3s", "flash-next"], lambda ex: 200)
