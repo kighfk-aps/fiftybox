@@ -506,7 +506,7 @@ def warm_up(ex: Executor) -> int:
 
 def probe_lanes() -> str:
     cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", STUDIO_SSH,
-           "source ~/.zprofile 2>/dev/null; lsof -nP -iTCP:8000 -iTCP:11234 -iTCP:11235 -sTCP:LISTEN"]
+           "source ~/.zprofile 2>/dev/null; lsof -nP -iTCP:8000 -iTCP:8001 -iTCP:11234 -iTCP:11235 -sTCP:LISTEN"]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
     except (subprocess.TimeoutExpired, OSError):
@@ -1242,11 +1242,18 @@ def wait_for_done(path: Path, max_seconds: float, poll: float = 5.0) -> dict:
 # ---------- CLI ----------
 
 def _executor(name: str | None) -> Executor:
-    ex = EXECUTORS[name or DEFAULT_EXECUTOR]
-    if name and name != DEFAULT_EXECUTOR:
-        print(f"WARN=executor {name} is not the skill default ({DEFAULT_EXECUTOR}); "
-              f"see reference.md before using it for real work", file=sys.stderr)
-    return ex
+    return EXECUTORS[name or DEFAULT_EXECUTOR]
+
+
+def current_candidates() -> tuple[list[str], dict[str, str], list[str]]:
+    """Eligible candidate names, skipped {name: reason}, and WARN= lines.
+
+    Reads the Pi registry and fiftybox-config at call time (the paths are module
+    globals); an unreadable registry skips the registration check with a warning."""
+    registry = load_json(PI_MODELS_PATH)
+    names, skipped = eligible_candidates(registry, load_json(CONFIG_PATH))
+    warnings = [] if registry is not None else ["WARN=pi registry unreadable; registration check skipped"]
+    return names, skipped, warnings
 
 
 def select_mode(lanes_arg: str | None, executor_arg: str | None, health: Callable[[Executor], int],
@@ -1308,11 +1315,26 @@ def _preflight_pool(args) -> int:
 
     The studio is never auto-started; when ioh alone answers, runs proceed on
     ioh (see reference.md for the studio start procedure)."""
-    codes = {}
-    for lane in EXECUTORS:
-        codes[lane] = executor_health(EXECUTORS[lane])
-        print(f"LANE={lane} HEALTH={codes[lane]}")
-    live = live_lanes(list(EXECUTORS), lambda ex: codes[ex.name])
+    names, skipped, warnings = current_candidates()
+    for line in warnings:
+        print(line)
+    for name, reason in skipped.items():
+        print(f"SKIP={name} REASON={reason}")
+    if not names:
+        print("PREFLIGHT=none (every candidate is off in fiftybox-config or missing from Pi; "
+              "run /fiftybox-config)")
+        return 1
+    codes: dict[str, int] = {}
+    served: dict[str, bool] = {}
+    for lane in names:
+        ex = EXECUTORS[lane]
+        codes[lane] = executor_health(ex)
+        served[lane] = codes[lane] == 200 and (ex.host != "studio" or ex.model in executor_models(ex))
+        suffix = f" SERVED={'yes' if served[lane] else 'no'}" if codes[lane] == 200 else ""
+        print(f"LANE={lane} HEALTH={codes[lane]}{suffix}")
+    live = live_lanes(names, lambda ex: 200 if served[ex.name] else 0)
+    if live:
+        print("PICK=" + ",".join(f"{EXECUTORS[lane].host}:{lane}" for lane in live))
     for lane in live:
         marker = "warmed" if lane == "flash-next" else f"warmed-{lane}"
         warmed = Path(args.artifact_dir, ".fbl", marker) if args.artifact_dir else None
@@ -1327,7 +1349,7 @@ def _preflight_pool(args) -> int:
         print("PREFLIGHT=ok")
         return 0
     print(f"LANES={probe_lanes()}")
-    if codes.get("flash-next") == 401:
+    if any(codes[n] == 401 for n in names if EXECUTORS[n].host == "studio"):
         print("PREFLIGHT=auth (key file and studio auth.api_key disagree; do not reissue the key)")
     else:
         print("PREFLIGHT=down (start procedure: reference.md)")
@@ -1367,8 +1389,13 @@ def cmd_run(args) -> int:
     feedback = Path(args.retry_feedback_file).read_text(encoding="utf-8") if args.retry_feedback_file else None
     state_path = Path(args.artifact_dir) / ".fbl" / "state.json"
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+    candidates, _skipped, _warnings = current_candidates()
+    if not args.executor and not candidates:
+        print("STOP=NO_CANDIDATES DETAIL=every candidate is off in fiftybox-config or missing from Pi")
+        return 2
     try:
-        mode, lanes = select_mode(args.lanes, args.executor, executor_health, state, ids)
+        mode, lanes = select_mode(args.lanes, args.executor, executor_serving, state, ids,
+                                  candidates=candidates)
     except ValueError as exc:
         print(f"STOP=BAD_LANES DETAIL={exc}")
         return 2
@@ -1386,15 +1413,16 @@ def cmd_run(args) -> int:
         results = shown
     elif mode == "pool":
         def dispatcher_factory(ex: Executor):
-            return OrchestrateDispatcher(health=lambda: executor_health(ex),
+            return OrchestrateDispatcher(health=lambda: executor_serving(ex),
                                          interval=60, misses=3)
 
         pool = LanePool(args.artifact_dir, lanes, dispatcher_factory=dispatcher_factory,
-                        health=executor_health, test_command=args.test_command, interval=60)
+                        health=executor_serving, test_command=args.test_command, interval=60)
         results = pool.run(ids, retry_feedback=feedback, emit=emit)
     else:
         ex = _executor(args.executor) if args.executor else EXECUTORS[lanes[0]]
-        runner = TaskRunner(args.artifact_dir, ex, test_command=args.test_command)
+        runner = TaskRunner(args.artifact_dir, ex, test_command=args.test_command,
+                            health=executor_serving)
         results = runner.run(ids, retry_feedback=feedback, emit=emit)
     if not shown:
         for r in results:
@@ -1457,7 +1485,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("run")
     common(sp)
-    sp.add_argument("--lanes", help="comma-separated candidate names from EXECUTORS (default: all)")
+    sp.add_argument("--lanes", help="comma-separated candidate names from EXECUTORS (default: every eligible candidate)")
     sp.add_argument("--artifact-dir", required=True)
     sp.add_argument("--tasks", required=True)
     sp.add_argument("--test-command")

@@ -7,8 +7,11 @@ replaced; the parsers and selection logic run for real.
 """
 from __future__ import annotations
 
+import contextlib
 import importlib.util
+import io
 import json
+import subprocess
 import sys
 import tempfile
 import threading
@@ -238,6 +241,110 @@ class FetchModelsTest(unittest.TestCase):
 
     def test_unreachable_gives_empty_list(self):
         self.assertEqual(fbl.fetch_models("http://127.0.0.1:1", timeout=1), [])
+
+
+class PreflightServedTest(unittest.TestCase):
+    def setUp(self):
+        self._saved = (fbl.executor_health, fbl.executor_models, fbl.warm_up, fbl.probe_lanes,
+                       fbl.PI_MODELS_PATH, fbl.CONFIG_PATH)
+        self.td = tempfile.TemporaryDirectory()
+        t = Path(self.td.name)
+        fbl.PI_MODELS_PATH, fbl.CONFIG_PATH = t / "pi.json", t / "config.json"  # missing files
+        fbl.executor_models = lambda ex: [ex.model]
+        fbl.warm_up = lambda ex: 200
+        fbl.probe_lanes = lambda: "none"
+
+    def tearDown(self):
+        (fbl.executor_health, fbl.executor_models, fbl.warm_up, fbl.probe_lanes,
+         fbl.PI_MODELS_PATH, fbl.CONFIG_PATH) = self._saved
+        self.td.cleanup()
+
+    def run_main(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            rc = fbl.main(list(argv))
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_todays_state_picks_flash_next_and_gemma31b(self):
+        warmed = []
+        fbl.executor_health = health_for({"flash-next": 200, "gemma31b": 200})
+        fbl.warm_up = lambda ex: warmed.append(ex.name) or 200
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 0)
+        for line in ("LANE=flash-next HEALTH=200 SERVED=yes", "LANE=gemma31b HEALTH=200",
+                     "LANE=iq3s HEALTH=0", "PICK=studio:flash-next,ioh:gemma31b",
+                     "LANES_UP=flash-next,gemma31b", "PREFLIGHT=ok"):
+            self.assertIn(line, out)
+        self.assertEqual(warmed, ["flash-next", "gemma31b"])
+
+    def test_skipped_candidates_are_listed_and_not_probed(self):
+        t = Path(self.td.name)
+        (t / "pi.json").write_text(json.dumps(registry_of(
+            *[(e.provider, e.model) for n, e in fbl.EXECUTORS.items() if n != "qwen27b"])),
+            encoding="utf-8")
+        (t / "config.json").write_text(json.dumps(config_off(
+            "macstudio-qwen-flash-next", "lmstudio-community--Qwen3.8-27B-MLX-4bit")),
+            encoding="utf-8")
+        fbl.executor_health = health_for({"flash-next": 200})
+        rc, out, _ = self.run_main("preflight")
+        self.assertIn("SKIP=qwen27b REASON=not-in-pi", out)
+        self.assertIn("SKIP=qwen27b-mlx4 REASON=off-in-config", out)
+        self.assertNotIn("LANE=qwen27b ", out)
+        self.assertNotIn("LANE=qwen27b-mlx4 ", out)
+
+    def test_studio_up_but_model_not_listed_is_not_served(self):
+        fbl.executor_health = health_for({n: 200 for n in STUDIO})
+        fbl.executor_models = lambda ex: []
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 1)
+        self.assertIn("LANE=flash-next HEALTH=200 SERVED=no", out)
+        self.assertNotIn("PICK=", out)
+
+    def test_no_eligible_candidate_stops_with_guidance(self):
+        (Path(self.td.name) / "config.json").write_text(
+            json.dumps({"providers": {"pi": {"enabled": False}}}), encoding="utf-8")
+        fbl.executor_health = lambda ex: self.fail("no server may be touched")
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 1)
+        self.assertIn("PREFLIGHT=none", out)
+        self.assertIn("/fiftybox-config", out)
+
+    def test_unreadable_registry_warns_and_checks_nothing(self):
+        fbl.executor_health = health_for({"flash-next": 200})
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 0)
+        self.assertIn("WARN=pi registry unreadable", out)
+
+    def test_a_401_still_gives_the_auth_message(self):
+        fbl.executor_health = health_for({"flash-next": 401})
+        rc, out, _ = self.run_main("preflight")
+        self.assertEqual(rc, 1)
+        self.assertIn("PREFLIGHT=auth", out)
+
+    def test_explicit_executor_prints_no_benchmark_warning(self):
+        fbl.executor_health = lambda ex: 200
+        rc, _, err = self.run_main("preflight", "--executor", "gemma4")
+        self.assertEqual(rc, 0)
+        self.assertNotIn("WARN=", err)
+
+    def test_run_without_candidates_stops_before_dispatch(self):
+        (Path(self.td.name) / "config.json").write_text(
+            json.dumps({"providers": {"pi": {"enabled": False}}}), encoding="utf-8")
+        rc, out, _ = self.run_main("run", "--artifact-dir", self.td.name, "--tasks", "1")
+        self.assertEqual(rc, 2)
+        self.assertIn("STOP=NO_CANDIDATES", out)
+
+
+class ProbeLanesTest(unittest.TestCase):
+    def test_lsof_checks_the_darkbloom_port_too(self):
+        seen = []
+        real = fbl.subprocess.run
+        fbl.subprocess.run = lambda cmd, **kw: seen.append(cmd) or subprocess.CompletedProcess(cmd, 0, "", "")
+        try:
+            fbl.probe_lanes()
+        finally:
+            fbl.subprocess.run = real
+        self.assertIn("-iTCP:8001", seen[0][-1])
 
 
 if __name__ == "__main__":

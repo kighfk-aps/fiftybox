@@ -922,9 +922,18 @@ class SelectModeTest(unittest.TestCase):
 class PreflightPoolTest(unittest.TestCase):
     def setUp(self):
         self._health, self._warm, self._probe = fbl.executor_health, fbl.warm_up, fbl.probe_lanes
+        self._models, self._paths = fbl.executor_models, (fbl.PI_MODELS_PATH, fbl.CONFIG_PATH)
+        self._td = tempfile.TemporaryDirectory()
+        # missing files: no registry/config filtering, and never the real ~/.pi or ~/.claude
+        fbl.PI_MODELS_PATH = Path(self._td.name) / "pi.json"
+        fbl.CONFIG_PATH = Path(self._td.name) / "config.json"
+        fbl.executor_models = lambda ex: [ex.model]
 
     def tearDown(self):
         fbl.executor_health, fbl.warm_up, fbl.probe_lanes = self._health, self._warm, self._probe
+        fbl.executor_models = self._models
+        fbl.PI_MODELS_PATH, fbl.CONFIG_PATH = self._paths
+        self._td.cleanup()
 
     def run_main(self, *argv):
         buf = io.StringIO()
