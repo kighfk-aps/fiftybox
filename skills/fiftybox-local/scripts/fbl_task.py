@@ -955,6 +955,8 @@ class TaskRunner:
         post: str | None = None
         if exit_code != 0:
             r.klass = classify_failure(out_text, exit_code, over_budget=False)
+            if r.klass == "model" and self.health(self.ex) != 200:
+                r.klass = "server"  # the lane stopped serving this model: infrastructure, not a model failure
             r.log_tail = _tail(out_text)
             if not self.count_server_attempts and r.klass == "server":
                 result, saved_attempts = "moved", attempts  # a move is not a model retry

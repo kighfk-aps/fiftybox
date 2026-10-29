@@ -744,6 +744,41 @@ class LanePoolMovesTest(PoolBase):
         self.assertIsNone(results[0].moved)
         self.assertIsNone(results[1].moved)
 
+    def test_model_swapped_off_a_lane_moves_the_task(self):
+        self.add_task(1, "calc1.py")
+        self.add_task(2, "calc2.py")
+        swapped = set()
+
+        def hook(wt, task_text, ex):
+            fname = spec_file(task_text)
+            if ex.name == "iq3s":
+                swapped.add("iq3s")  # from now on the server no longer serves this model
+                (wt / fname).write_text("half-broken\n", encoding="utf-8")
+                return 1
+            (wt / fname).write_text(GOOD, encoding="utf-8")
+            return 0
+
+        pool = self.pool(["flash-next", "iq3s"], hook, log_tail="Unknown model: qwen3.8-flash-next-iq3_s",
+                         health=lambda ex: 0 if ex.name in swapped else 200)
+        by_task = {r.task: r for r in pool.run([1, 2])}
+        self.assertEqual(by_task[2].verdict, "CLEAN", fbl.format_result(by_task[2]))
+        self.assertEqual(by_task[2].moved, "iq3s->flash-next")
+        state = json.loads((self.art / ".fbl" / "state.json").read_text(encoding="utf-8"))
+        self.assertEqual(state["tasks"]["2"]["attempts"], 1)
+        metrics = (self.art / "executor-metrics.md").read_text(encoding="utf-8")
+        self.assertIn("moved", metrics)  # infrastructure row, so calibrate ignores it
+
+    def test_model_error_while_the_server_still_serves_it_stops(self):
+        self.add_task(1, "calc1.py")
+
+        def hook(wt, task_text, ex):
+            return 1
+
+        pool = self.pool(["flash-next"], hook, log_tail="Unknown model: typo")
+        r = pool.run([1])[0]
+        self.assertEqual(r.klass, "model")
+        self.assertIsNone(r.moved)
+
 
 class LanePoolDisciplineTest(PoolBase):
     def intervals_overlap(self, a, b):
