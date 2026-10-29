@@ -60,11 +60,11 @@ EXECUTORS = {
     "gemma4": Executor(
         "gemma4", "macstudio-gemma4", "mlx-community--gemma-4-26B-A4B-it-qat-4bit",
         "http://100.115.199.115:11235", False, design_max=60, prompt_max=120),
-    # ioh PC lane (llama.cpp Strata, ctx 131072, no auth) — same model family
+    # ioh PC lane (llama.cpp Strata, ctx 262144, no auth) — same model family
     # as flash-next; dispatched by the lane pool whenever it answers health.
     "iq3s": Executor(
         "iq3s", "ioh", "qwen3.8-flash-next-iq3_s",
-        "http://100.126.254.22:8080", False, design_max=70, prompt_max=140),
+        "http://100.76.6.16:8080", False, design_max=70, prompt_max=140),
 }
 DEFAULT_EXECUTOR = "flash-next"
 # Local lane pool: the studio is preferred (higher quantization, bigger ctx);

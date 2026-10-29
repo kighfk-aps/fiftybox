@@ -43,7 +43,7 @@ provider/model 플래그가 없다. `fbl_task.py`의 `--executor`도 쓰지 않�
 | 레인 | provider / model | 엔드포인트·인증 | 컨텍스트 |
 |---|---|---|---|
 | Studio | `macstudio-qwen-flash-next` / `Jundot--Qwen3.8-Flash-Next-oQ4e-mtp` | `http://100.115.199.115:8000` (Bearer 키 `~/.config/opencode/macstudio-omlx.key`) | 262,144 |
-| ioh | `ioh` / `qwen3.8-flash-next-iq3_s` | `http://100.126.254.22:8080` (키 없음) | 131,072 |
+| ioh | `ioh` / `qwen3.8-flash-next-iq3_s` | `http://100.76.6.16:8080` (키 없음) | 262,144 |
 
 에이전트는 `pi`, `IMPL_TIMEOUT`은 `1800`로 공통이다. 살아 있는 레인만 풀에 들어가고 둘 다 한가하면
 스튜디오가 먼저 가져간다. orchestrate.py를 직접 부를 때는 provider·model을 **전부** 명시한다

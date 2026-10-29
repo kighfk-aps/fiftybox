@@ -86,10 +86,9 @@ executor는 Flash-Next로 고정이라 **측정·비교 전용**이다(`WARN=`�
 
 ## 레인 풀: ioh iq3_s
 
-`fbl_task.py`의 레인 풀(`LANE_POOL`)은 맥스튜디오 Flash-Next와 ioh PC(Tailscale `100.126.254.22:8080`,
+`fbl_task.py`의 레인 풀(`LANE_POOL`)은 맥스튜디오 Flash-Next와 ioh PC(Tailscale `100.76.6.16:8080`,
 llama.cpp Strata, 키 없음)의 `qwen3.8-flash-next-iq3_s` 두 레인이다. Pi provider명은 `ioh`다. Flash-Next와
-같은 모델 계열이라 예산(70/140)을 공유한다. 컨텍스트가 131,072로 스튜디오(262,144)보다 좁으니 긴
-design/intent는 더 압축한다. 살아 있는 레인이 둘 이상이면 독립 태스크가 동시에 분배되고, 한쪽만 살아 있으면
+같은 모델 계열이라 예산(70/140)을 공유한다. 컨텍스트는 스튜디오와 같은 262,144다. 살아 있는 레인이 둘 이상이면 독립 태스크가 동시에 분배되고, 한쪽만 살아 있으면
 그 레인으로 순차 실행이다. 한 저장소만 쓰려면 `run --lanes flash-next`로 제한한다.
 
 - **생존 판정은 HTTP 응답뿐이다.** 모델 이름 확인을 하지 않는다. ioh가 RAG 때문에 q3s를 내리고 gemma4

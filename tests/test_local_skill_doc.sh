@@ -57,7 +57,7 @@ lacks "$SKILL" "macstudio-gemma4" "SKILL.md does not advertise the benchmark-onl
 
 # the ioh lane is a pool lane beside the studio lane
 has "$SKILL" "iq3s" "SKILL.md names the ioh iq3s pool lane"
-has "$SKILL" "131,072" "SKILL.md documents the ioh lane context window"
+has "$SKILL" "| ioh | \`ioh\` / \`qwen3.8-flash-next-iq3_s\` | \`http://100.76.6.16:8080\` (키 없음) | 262,144 |" "SKILL.md documents the ioh lane context window"
 lacks "$SKILL" "사용자 지시가 있을 때만" "SKILL.md drops the user-directed-only ioh gate"
 has "$REF" "레인 풀: ioh" "reference.md documents the ioh pool lane"
 

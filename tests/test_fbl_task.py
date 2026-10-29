@@ -73,7 +73,7 @@ class ConstantsTest(unittest.TestCase):
         ex = fbl.EXECUTORS["iq3s"]
         self.assertEqual(ex.provider, "ioh")
         self.assertEqual(ex.model, "qwen3.8-flash-next-iq3_s")
-        self.assertEqual(ex.base_url, "http://100.126.254.22:8080")
+        self.assertEqual(ex.base_url, "http://100.76.6.16:8080")
         self.assertFalse(ex.needs_key)
         self.assertEqual((ex.design_max, ex.prompt_max), (70, 140))
 
