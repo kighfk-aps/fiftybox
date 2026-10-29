@@ -25,6 +25,12 @@ else
     fail "fbl_task.py lane-pool unit tests"
 fi
 
+if python3 -I "$SCRIPT_DIR/tests/test_fbl_served.py"; then
+    pass "fbl_task.py served-model unit tests"
+else
+    fail "fbl_task.py served-model unit tests"
+fi
+
 echo ""
 echo "Results: $PASS passed, $FAIL failed"
 [[ "$FAIL" -eq 0 ]] && exit 0 || exit 1

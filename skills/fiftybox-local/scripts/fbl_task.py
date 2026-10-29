@@ -50,27 +50,58 @@ class Executor:
     needs_key: bool
     design_max: int
     prompt_max: int
+    host: str = ""
+    params_b: float = 0.0
 
 
+STUDIO_URL = "http://100.115.199.115"
+IOH_URL = "http://100.76.6.16"
+
+# Candidate table: the only models the skill may use. Each PC contributes at most
+# one served candidate per run (live_lanes): the bigger params_b wins and table
+# order breaks ties. Flash-Next family keeps the budget earned over 40 clean
+# tasks (70/140); every other model starts at the Gemma4 values (60/120).
+# ioh lists the R9700 ports only (8080 Strata, 8083, 8084); 8081 is the RTX 5060
+# Ti that serves the RAG, so it is never a candidate.
 EXECUTORS = {
     "flash-next": Executor(
         "flash-next", "macstudio-qwen-flash-next", "Jundot--Qwen3.8-Flash-Next-oQ4e-mtp",
-        "http://100.115.199.115:8000", True, design_max=70, prompt_max=140),
-    # Benchmark-only lane: the skill's executor stays fixed on flash-next.
+        f"{STUDIO_URL}:8000", True, design_max=70, prompt_max=140,
+        host="studio", params_b=125.0),  # model card: 125B parameters, 6B active
+    "qwen27b-mlx4": Executor(
+        "qwen27b-mlx4", "macstudio-qwen-flash-next", "lmstudio-community--Qwen3.8-27B-MLX-4bit",
+        f"{STUDIO_URL}:8000", True, design_max=60, prompt_max=120, host="studio", params_b=27.0),
+    "qwen27b-8bit": Executor(
+        "qwen27b-8bit", "macstudio-qwen38-27b", "qwen38-27b-8bit",
+        f"{STUDIO_URL}:11234", False, design_max=60, prompt_max=120, host="studio", params_b=27.0),
     "gemma4": Executor(
         "gemma4", "macstudio-gemma4", "mlx-community--gemma-4-26B-A4B-it-qat-4bit",
-        "http://100.115.199.115:11235", False, design_max=60, prompt_max=120),
-    # ioh PC lane (llama.cpp Strata, ctx 262144, no auth) — same model family
-    # as flash-next; dispatched by the lane pool whenever it answers health.
+        f"{STUDIO_URL}:11235", False, design_max=60, prompt_max=120, host="studio", params_b=26.0),
+    "gpt-oss-20b": Executor(
+        "gpt-oss-20b", "macstudio-darkbloom", "gpt-oss-20b",
+        f"{STUDIO_URL}:8001", False, design_max=60, prompt_max=120, host="studio", params_b=20.0),
+    "qwen35b-a3b": Executor(
+        "qwen35b-a3b", "macstudio-darkbloom", "qwen3.5-35b-a3b",
+        f"{STUDIO_URL}:8001", False, design_max=60, prompt_max=120, host="studio", params_b=35.0),
+    # ioh PC (llama.cpp Strata, ctx 262144, no auth): same model as flash-next, lower quant.
     "iq3s": Executor(
         "iq3s", "ioh", "qwen3.8-flash-next-iq3_s",
-        "http://100.76.6.16:8080", False, design_max=70, prompt_max=140),
+        f"{IOH_URL}:8080", False, design_max=70, prompt_max=140, host="ioh", params_b=125.0),
+    "gemma31b": Executor(
+        "gemma31b", "ioh-gemma31b", "gemma-4-31b-it",
+        f"{IOH_URL}:8083", False, design_max=60, prompt_max=120, host="ioh", params_b=31.0),
+    "qwen27b": Executor(
+        "qwen27b", "ioh-qwen27b", "qwen3.8-27b",
+        f"{IOH_URL}:8084", False, design_max=60, prompt_max=120, host="ioh", params_b=27.0),
 }
 DEFAULT_EXECUTOR = "flash-next"
+HOST_ORDER = ("studio", "ioh")
 # Local lane pool: the studio is preferred (higher quantization, bigger ctx);
 # gemma4 stays out (benchmark-only). Each lane keeps its own Executor budget.
 LANE_POOL = ("flash-next", "iq3s")
 LANE_SYNC_DIRS = ("node_modules", ".venv", "venv")
+PI_MODELS_PATH = Path("~/.pi/agent/models.json").expanduser()
+CONFIG_PATH = Path("~/.claude/fiftybox-config.json").expanduser()
 
 HEAVY_DIRS = ("node_modules", ".venv", "venv", "__pycache__", ".pytest_cache", ".worktrees", ".git")
 TEST_DIRS = ("tests", "test", "__tests__")
@@ -82,6 +113,40 @@ SKIP_RES = [re.compile(p) for p in (
     r"pytest\.mark\.(skip|xfail)", r"pytest\.skip\(", r"\b(?:it|test|describe)\.(?:skip|only)\b",
     r"\.only\(", r"\bassert True\b", r"\bskipTest\(", r"unittest\.skip", r"\bt\.Skip\(",
     r"@Ignore\b", r"\bxit\(", r"\bxdescribe\(")]
+
+
+# ---------- candidates ----------
+
+def load_json(path: Path) -> dict | None:
+    """Parsed JSON object, or None when the file is missing, unreadable or broken."""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def eligible_candidates(registry: dict | None, config: dict | None) -> tuple[list[str], dict[str, str]]:
+    """Candidates registered in Pi and not switched off in fiftybox-config.
+
+    Returns (names in table order, {skipped name: "not-in-pi" | "off-in-config"}).
+    ``None`` for either source means unreadable: that check is skipped. A missing
+    config entry counts as on; ``providers.pi.enabled == false`` turns all off."""
+    pi_cfg = ((config or {}).get("providers") or {}).get("pi") or {}
+    names: list[str] = []
+    skipped: dict[str, str] = {}
+    for name, ex in EXECUTORS.items():
+        if registry is not None:
+            models = ((registry.get("providers") or {}).get(ex.provider) or {}).get("models") or []
+            if ex.model not in {m.get("id") for m in models if isinstance(m, dict)}:
+                skipped[name] = "not-in-pi"
+                continue
+        backend = (pi_cfg.get("backends") or {}).get(ex.provider) or {}
+        if pi_cfg.get("enabled") is False or (backend.get("models") or {}).get(ex.model) is False:
+            skipped[name] = "off-in-config"
+            continue
+        names.append(name)
+    return names, skipped
 
 
 # ---------- parsing ----------
